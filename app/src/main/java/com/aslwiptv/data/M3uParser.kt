@@ -11,7 +11,7 @@ object M3uParser {
         var logo: String? = null
         var epg: String? = null
         text.lineSequence().forEach { raw ->
-            val line = raw.trim()
+            val line = raw.removePrefix("\uFEFF").trim()
             when {
                 line.startsWith("#EXTINF", ignoreCase = true) -> {
                     val attrs = attribute.findAll(line).associate { it.groupValues[1].lowercase() to it.groupValues[2] }
@@ -32,3 +32,4 @@ object M3uParser {
         return result
     }
 }
+
