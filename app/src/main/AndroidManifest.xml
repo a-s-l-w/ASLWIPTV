@@ -4,10 +4,12 @@
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
     <application
         android:allowBackup="false"
-        android:label="ASLWIPTV"
+        android:icon="@mipmap/ic_launcher"
+        android:label="ASLW IPTV"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:theme="@style/Theme.ASLWIPTV"
         android:supportsRtl="true"
-        android:usesCleartextTraffic="false">
+        android:usesCleartextTraffic="true">
         <activity
             android:name=".MainActivity"
             android:configChanges="orientation|screenSize|keyboardHidden"
@@ -23,3 +25,5 @@
         </activity>
     </application>
 </manifest>
+
+

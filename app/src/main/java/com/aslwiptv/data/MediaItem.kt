@@ -7,7 +7,9 @@ data class MediaItem(
     val category: String = "Senza categoria",
     val logoUrl: String? = null,
     val kind: MediaKind = MediaKind.LIVE,
-    val epgId: String? = null
+    val epgId: String? = null,
+    val seriesId: String? = null,
+    val requestHeaders: Map<String, String> = emptyMap()
 )
 
 enum class MediaKind { LIVE, MOVIE, SERIES, UNKNOWN }
@@ -17,3 +19,4 @@ data class XtreamCredentials(
     val username: String,
     val password: String
 )
+
