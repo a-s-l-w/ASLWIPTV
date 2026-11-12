@@ -247,7 +247,8 @@ private fun AslwApp(playback: PlaybackController, network: AppNetwork) {
     }
 
     BoxWithConstraints(Modifier.fillMaxSize().background(Ink)) {
-        val compact = maxWidth < 600.dp
+        val availableWidth = maxWidth
+        val compact = availableWidth < 600.dp
         if (compact) {
             Column(Modifier.fillMaxSize()) {
                 AppHeader(
@@ -326,7 +327,7 @@ private fun AslwApp(playback: PlaybackController, network: AppNetwork) {
                         activeProfileId = activeProfileId,
                         onSelectProfile = ::selectProfile
                     )
-                    if (playing != null && !playerFullscreen && maxWidth >= 720.dp) {
+                    if (playing != null && !playerFullscreen && availableWidth >= 720.dp) {
                         Row(
                             Modifier.weight(1f).fillMaxWidth().padding(horizontal = 22.dp, vertical = 12.dp),
                             horizontalArrangement = Arrangement.spacedBy(16.dp)
