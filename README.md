@@ -1,16 +1,16 @@
-# ASLWIPTV — Android starter project
+# ASLW IPTV — Android app
 
 Progetto originale Android (Kotlin + Jetpack Compose + Media3), creato da zero. L'APK ricevuto è stato considerato solo come riferimento generale: nessun codice, asset, libreria o branding è stato estratto o riutilizzato.
 
-## Stato attuale: prototipo 0.4.0
+## Stato attuale: prototipo 0.4.1
 
 Incluso:
 - struttura Android multi-form-factor (telefono/tablet e launcher Android TV)
 - UI dark antracite / viola elettrico / blu
-- navigazione Home, Live TV, Film, Serie, EPG e Impostazioni
+- navigazione dopo l’accesso tra Diretta TV, Film e Serie TV
 - player Media3/ExoPlayer con supporto HLS e DASH tramite moduli dedicati
 - importazione di playlist M3U da URL o file locale
-- collegamento Xtream Codes con caricamento dei canali Live TV
+- collegamento Xtream Codes con caricamento di Live TV, film e serie TV
 - profili multipli per account Xtream e playlist M3U, selezionabili dall’intestazione
 - salvataggio dei profili e dei canali importati, con cifratura AES-GCM tramite Android Keystore
 - schermata di accesso iniziale con selezione account e impostazioni rete/proxy prima dell’accesso

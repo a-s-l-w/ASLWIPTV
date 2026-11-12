@@ -93,7 +93,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         network = AppNetwork(this)
-        playback = PlaybackController(this, network.client)
+        playback = PlaybackController(this, network)
         setContent { AslwTheme { AslwApp(playback, network) } }
     }
     override fun onStop() { playback.player.pause(); super.onStop() }
@@ -367,7 +367,7 @@ private fun AslwApp(playback: PlaybackController, network: AppNetwork) {
         }
     }
 
-    BoxWithConstraints(Modifier.fillMaxSize().background(Ink)) {
+    BoxWithConstraints(Modifier.fillMaxSize().background(Ink).windowInsetsPadding(WindowInsets.safeDrawing)) {
         val availableWidth = maxWidth
         val compact = availableWidth < 600.dp
         if (!authenticated) {
@@ -557,7 +557,7 @@ private fun LoginScreen(
             ) {
                 Image(
                     painter = painterResource(R.drawable.aslwiptv_logo),
-                    contentDescription = "Logo ASLWIPTV",
+                    contentDescription = "Logo ASLW IPTV",
                     contentScale = ContentScale.Fit,
                     modifier = Modifier.fillMaxSize().padding(12.dp)
                 )
@@ -656,7 +656,7 @@ private fun AppHeader(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 BrandMark()
                 Column(Modifier.weight(1f).padding(start = 8.dp)) {
-                    Text("ASLWIPTV", fontWeight = FontWeight.Black, fontSize = 18.sp, letterSpacing = 1.sp)
+                    Text("ASLW IPTV", fontWeight = FontWeight.Black, fontSize = 18.sp, letterSpacing = 1.sp)
                     Text("STREAMING, SENZA COMPROMESSI", color = Muted, fontSize = 8.sp, letterSpacing = 1.sp)
                 }
                 IconButton(onClick = onAdd) { Icon(Icons.Default.Add, contentDescription = "Aggiungi account", tint = Purple) }
@@ -669,7 +669,7 @@ private fun AppHeader(
         Row(Modifier.fillMaxWidth().padding(horizontal = padding, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             BrandMark()
             Column(Modifier.weight(1f).padding(start = 10.dp)) {
-                Text("ASLWIPTV", fontWeight = FontWeight.Black, fontSize = 19.sp, letterSpacing = 1.sp)
+                Text("ASLW IPTV", fontWeight = FontWeight.Black, fontSize = 19.sp, letterSpacing = 1.sp)
                 Text("STREAMING, SENZA COMPROMESSI", color = Muted, fontSize = 8.sp, letterSpacing = 1.2.sp)
             }
             ProfilePicker(profiles, activeProfileId, onSelectProfile, Modifier.widthIn(min = 150.dp, max = 220.dp))
@@ -683,7 +683,7 @@ private fun AppHeader(
 @Composable
 private fun BrandMark() {
     Box(Modifier.size(40.dp).background(Color.White, RoundedCornerShape(9.dp)).padding(3.dp)) {
-        Image(painterResource(R.drawable.aslwiptv_logo), contentDescription = "Logo ASLWIPTV", contentScale = ContentScale.Fit)
+        Image(painterResource(R.drawable.aslwiptv_logo), contentDescription = "Logo ASLW IPTV", contentScale = ContentScale.Fit)
     }
 }
 
@@ -728,7 +728,7 @@ private fun HomeContent(onLive: () -> Unit, onMovies: () -> Unit, onSetup: () ->
             StatCard("ELEMENTI CARICATI", count.toString(), Modifier.weight(1f))
             StatCard("PIATTAFORMA", "Android", Modifier.weight(1f))
         }
-        Text("ASLWIPTV è un lettore: aggiungi playlist e flussi per cui possiedi i diritti di accesso.", color = Muted, fontSize = 12.sp)
+        Text("ASLW IPTV è un lettore: aggiungi playlist e flussi per cui possiedi i diritti di accesso.", color = Muted, fontSize = 12.sp)
     }
 }
 
@@ -867,7 +867,7 @@ private fun SettingsContent(advanced: Boolean, onAdvanced: (Boolean) -> Unit, on
             Text(proxyMessage!!, color = if (savedMessage) Purple else MaterialTheme.colorScheme.error, fontSize = 12.sp)
         }
         Button(onClick = onSetup) { Icon(Icons.Default.Add, null); Spacer(Modifier.width(6.dp)); Text("Gestisci sorgenti") }
-        Text("Versione 0.4.0 · ASLWIPTV", color = Muted, fontSize = 11.sp)
+        Text("Versione 0.4.1 · ASLW IPTV", color = Muted, fontSize = 11.sp)
     }
 }
 

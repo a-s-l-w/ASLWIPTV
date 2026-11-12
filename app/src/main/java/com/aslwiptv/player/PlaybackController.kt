@@ -4,21 +4,34 @@ import android.content.Context
 import androidx.media3.common.MediaItem as ExoMediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
+import androidx.media3.common.util.Util
+import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import com.aslwiptv.data.AppNetwork
 import com.aslwiptv.data.MediaItem
-import okhttp3.OkHttpClient
 
 /** Single playback engine shared by compact and advanced control surfaces. */
-class PlaybackController(context: Context, networkClient: OkHttpClient) {
-    private val httpDataSourceFactory = OkHttpDataSource.Factory(networkClient).setUserAgent("ASLWIPTV/0.4.0")
+class PlaybackController(context: Context, private val network: AppNetwork) {
+    private val compatibleUserAgent = Util.getUserAgent(context, "ExoPlayer")
+    private val appProxyHttpFactory = OkHttpDataSource.Factory(network.client).setUserAgent(compatibleUserAgent)
+    private val platformHttpFactory = DefaultHttpDataSource.Factory().setUserAgent(compatibleUserAgent)
+    private val routedHttpFactory = object : DataSource.Factory {
+        override fun createDataSource(): DataSource {
+            val settings = network.proxySettings()
+            val useAppProxy = settings.enabled && settings.validate() == null
+            return if (useAppProxy) appProxyHttpFactory.createDataSource()
+            else platformHttpFactory.createDataSource()
+        }
+    }
     private val mediaSourceFactory = DefaultMediaSourceFactory(
         DefaultDataSource.Factory(
             context,
-            httpDataSourceFactory
+            routedHttpFactory
         )
     )
 
@@ -35,7 +48,13 @@ class PlaybackController(context: Context, networkClient: OkHttpClient) {
         }
 
     fun play(item: MediaItem) {
-        httpDataSourceFactory.setDefaultRequestProperties(item.requestHeaders)
+        val customUserAgent = item.requestHeaders.entries
+            .firstOrNull { it.key.equals("User-Agent", ignoreCase = true) }
+            ?.value
+        val requestHeaders = item.requestHeaders.filterKeys { !it.equals("User-Agent", ignoreCase = true) }
+        val userAgent = customUserAgent ?: compatibleUserAgent
+        appProxyHttpFactory.setUserAgent(userAgent).setDefaultRequestProperties(requestHeaders)
+        platformHttpFactory.setUserAgent(userAgent).setDefaultRequestProperties(requestHeaders)
         val mime = when {
             item.streamUrl.contains(".m3u8", true) -> MimeTypes.APPLICATION_M3U8
             item.streamUrl.contains(".mpd", true) -> MimeTypes.APPLICATION_MPD

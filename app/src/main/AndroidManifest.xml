@@ -5,7 +5,7 @@
     <application
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
-        android:label="ASLWIPTV"
+        android:label="ASLW IPTV"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:theme="@style/Theme.ASLWIPTV"
         android:supportsRtl="true"
