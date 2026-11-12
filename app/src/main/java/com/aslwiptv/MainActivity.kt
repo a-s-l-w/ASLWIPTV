@@ -33,6 +33,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -47,6 +48,9 @@ import com.aslwiptv.data.MediaItem
 import com.aslwiptv.data.MediaKind
 import com.aslwiptv.data.M3uParser
 import com.aslwiptv.data.M3uRepository
+import com.aslwiptv.data.PlaylistProfile
+import com.aslwiptv.data.PlaylistProfileStore
+import com.aslwiptv.data.PlaylistSourceType
 import com.aslwiptv.data.ProxySettings
 import com.aslwiptv.data.XtreamCredentials
 import com.aslwiptv.data.XtreamRepository
@@ -55,6 +59,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
+import java.util.UUID
 
 private val Ink = Color(0xFF090A10)
 private val Panel = Color(0xFF141622)
@@ -80,7 +85,17 @@ class MainActivity : ComponentActivity() {
 private fun AslwTheme(content: @Composable () -> Unit) {
     MaterialTheme(colorScheme = darkColorScheme(
         primary = Purple, secondary = Blue, background = Ink, surface = Panel,
-        onPrimary = Color(0xFF171020), onBackground = Color.White, onSurface = Color.White
+        onPrimary = Color.White,
+        onSecondary = Color.White,
+        onBackground = Color.White,
+        onSurface = Color.White,
+        onSurfaceVariant = Color.White,
+        onPrimaryContainer = Color.White,
+        onSecondaryContainer = Color.White,
+        onTertiary = Color.White,
+        onTertiaryContainer = Color.White,
+        onError = Color.White,
+        onErrorContainer = Color.White
     ), content = content)
 }
 
@@ -107,7 +122,22 @@ private fun AslwApp(playback: PlaybackController, network: AppNetwork) {
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var playlistUrl by remember { mutableStateOf("") }
+    var profileName by remember { mutableStateOf("") }
+    var pendingFileProfileName by remember { mutableStateOf("") }
+    var profiles by remember { mutableStateOf<List<PlaylistProfile>>(emptyList()) }
+    var activeProfileId by remember { mutableStateOf<String?>(null) }
     var playlist by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
+    var playerFullscreen by remember { mutableStateOf(false) }
+
+    LaunchedEffect(context) {
+        runCatching { PlaylistProfileStore.load(context.applicationContext) }
+            .onSuccess { library ->
+                profiles = library.profiles
+                activeProfileId = library.activeProfileId
+                playlist = library.profiles.firstOrNull { it.id == library.activeProfileId }?.channels.orEmpty()
+            }
+            .onFailure { error -> sourceError = error.message ?: "Impossibile leggere le liste salvate." }
+    }
 
     DisposableEffect(playback.player) {
         val listener = object : Player.Listener {
@@ -119,17 +149,48 @@ private fun AslwApp(playback: PlaybackController, network: AppNetwork) {
         onDispose { playback.player.removeListener(listener) }
     }
 
-    fun importPlaylist(loader: suspend () -> Result<List<MediaItem>>) {
+    fun importPlaylist(
+        name: String,
+        sourceType: PlaylistSourceType,
+        serverUrl: String = "",
+        accountUsername: String = "",
+        accountPassword: String = "",
+        sourceUrl: String = "",
+        loader: suspend () -> Result<List<MediaItem>>
+    ) {
         if (loading) return
+        if (name.isBlank()) {
+            sourceError = "Inserisci un nome per questa lista o account."
+            return
+        }
         scope.launch {
             loading = true
             sourceError = null
             try {
                 loader().fold(
                     onSuccess = { channels ->
+                        val profile = PlaylistProfile(
+                            id = UUID.randomUUID().toString(),
+                            name = name.trim(),
+                            sourceType = sourceType,
+                            serverUrl = serverUrl,
+                            username = accountUsername,
+                            password = accountPassword,
+                            playlistUrl = sourceUrl,
+                            channels = channels
+                        )
+                        val updatedProfiles = profiles + profile
+                        PlaylistProfileStore.save(context.applicationContext, updatedProfiles, profile.id)
+                        profiles = updatedProfiles
+                        activeProfileId = profile.id
                         playlist = channels
+                        playing = null
+                        playerFullscreen = false
+                        playerError = null
+                        playback.player.pause()
                         section = Section.LIVE
                         showSetup = false
+                        profileName = ""
                         server = ""
                         username = ""
                         password = ""
@@ -146,21 +207,68 @@ private fun AslwApp(playback: PlaybackController, network: AppNetwork) {
     }
 
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
-        if (uri != null) importPlaylist { runCatching { readLocalM3u(context, uri) } }
+        if (uri != null) importPlaylist(pendingFileProfileName, PlaylistSourceType.M3U_FILE) {
+            runCatching { readLocalM3u(context, uri) }
+        }
+    }
+
+    fun openSetup() {
+        sourceError = null
+        profileName = "Account ${profiles.size + 1}"
+        showSetup = true
+    }
+
+    fun selectProfile(profile: PlaylistProfile) {
+        if (activeProfileId == profile.id) return
+        activeProfileId = profile.id
+        playlist = profile.channels
+        playing = null
+        playerFullscreen = false
+        playerError = null
+        playback.player.pause()
+        section = Section.LIVE
+        scope.launch {
+            runCatching { PlaylistProfileStore.save(context.applicationContext, profiles, profile.id) }
+                .onFailure { sourceError = it.message ?: "Impossibile salvare la lista attiva." }
+        }
+    }
+
+    val activeProfile = profiles.firstOrNull { it.id == activeProfileId }
+
+    fun startPlayback(item: MediaItem) {
+        if (playing?.id == item.id) {
+            playerFullscreen = true
+            return
+        }
+        playerError = null
+        playing = item
+        playerFullscreen = false
+        playback.play(item)
     }
 
     BoxWithConstraints(Modifier.fillMaxSize().background(Ink)) {
         val compact = maxWidth < 600.dp
         if (compact) {
             Column(Modifier.fillMaxSize()) {
-                AppHeader(onAdd = { sourceError = null; showSetup = true }, compact = true)
+                AppHeader(
+                    onAdd = ::openSetup,
+                    compact = true,
+                    profiles = profiles,
+                    activeProfileId = activeProfileId,
+                    onSelectProfile = ::selectProfile
+                )
                 Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
-                    CurrentSection(section, playlist, advanced, { advanced = it }, { showSetup = true }, { section = it }, network) { item ->
-                        playerError = null
-                        playing = item
-                        playback.play(item)
-                    }
+                    CurrentSection(section, playlist, advanced, { advanced = it }, ::openSetup, { section = it }, network, ::startPlayback)
                 }
+                if (playing != null && !playerFullscreen) PlayerPreviewPane(
+                    item = playing!!,
+                    playback = playback,
+                    error = playerError,
+                    advanced = advanced,
+                    compact = true,
+                    onFullscreen = { playerFullscreen = true },
+                    onRetry = { playerError = null; playback.play(playing!!) }
+                )
                 NavigationBar(containerColor = Color(0xFF0D0F18)) {
                     listOf(Section.HOME, Section.LIVE, Section.MOVIES).forEach { item ->
                         NavigationBarItem(
@@ -211,12 +319,47 @@ private fun AslwApp(playback: PlaybackController, network: AppNetwork) {
                     }
                 }
                 Column(Modifier.weight(1f).fillMaxHeight()) {
-                    AppHeader(onAdd = { sourceError = null; showSetup = true }, compact = false)
-                    Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 22.dp, vertical = 12.dp)) {
-                        CurrentSection(section, playlist, advanced, { advanced = it }, { showSetup = true }, { section = it }, network) { item ->
-                            playerError = null
-                            playing = item
-                            playback.play(item)
+                    AppHeader(
+                        onAdd = ::openSetup,
+                        compact = false,
+                        profiles = profiles,
+                        activeProfileId = activeProfileId,
+                        onSelectProfile = ::selectProfile
+                    )
+                    if (playing != null && !playerFullscreen && maxWidth >= 720.dp) {
+                        Row(
+                            Modifier.weight(1f).fillMaxWidth().padding(horizontal = 22.dp, vertical = 12.dp),
+                            horizontalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            Box(Modifier.weight(0.58f).fillMaxHeight()) {
+                                CurrentSection(section, playlist, advanced, { advanced = it }, ::openSetup, { section = it }, network, ::startPlayback)
+                            }
+                            Box(Modifier.weight(0.42f).fillMaxHeight()) {
+                                PlayerPreviewPane(
+                                    item = playing!!,
+                                    playback = playback,
+                                    error = playerError,
+                                    advanced = advanced,
+                                    compact = false,
+                                    onFullscreen = { playerFullscreen = true },
+                                    onRetry = { playerError = null; playback.play(playing!!) }
+                                )
+                            }
+                        }
+                    } else {
+                        Column(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 22.dp, vertical = 12.dp)) {
+                            Box(Modifier.weight(1f).fillMaxWidth()) {
+                                CurrentSection(section, playlist, advanced, { advanced = it }, ::openSetup, { section = it }, network, ::startPlayback)
+                            }
+                            if (playing != null && !playerFullscreen) PlayerPreviewPane(
+                                item = playing!!,
+                                playback = playback,
+                                error = playerError,
+                                advanced = advanced,
+                                compact = true,
+                                onFullscreen = { playerFullscreen = true },
+                                onRetry = { playerError = null; playback.play(playing!!) }
+                            )
                         }
                     }
                 }
@@ -224,18 +367,20 @@ private fun AslwApp(playback: PlaybackController, network: AppNetwork) {
         }
     }
 
-    if (playing != null) PlayerDialog(
+    if (playing != null && playerFullscreen) PlayerDialog(
         item = playing!!,
         playback = playback,
         error = playerError,
         advanced = advanced,
         onAdvanced = { advanced = it },
         onRetry = { playerError = null; playback.play(playing!!) },
-        onDismiss = { playing = null; playerError = null; playback.player.pause() }
+        onDismiss = { playerFullscreen = false }
     )
 
     if (showSetup) {
         AddSourceDialog(
+            profileName = profileName,
+            onProfileNameChange = { profileName = it; sourceError = null },
             server = server,
             onServerChange = { server = it },
             username = username,
@@ -248,19 +393,68 @@ private fun AslwApp(playback: PlaybackController, network: AppNetwork) {
             error = sourceError,
             onClearError = { sourceError = null },
             onDismiss = { if (!loading) showSetup = false },
-            onSaveXtream = { importPlaylist { xtream.loadLive(XtreamCredentials(server, username, password)) } },
-            onSaveM3u = { importPlaylist { m3u.load(playlistUrl) } },
-            onPickFile = { filePicker.launch(arrayOf("*/*")) }
+            onSaveXtream = { name ->
+                importPlaylist(name, PlaylistSourceType.XTREAM, server, username, password) {
+                    xtream.loadLive(XtreamCredentials(server, username, password))
+                }
+            },
+            onSaveM3u = { name ->
+                importPlaylist(name, PlaylistSourceType.M3U_URL, sourceUrl = playlistUrl) { m3u.load(playlistUrl) }
+            },
+            onPickFile = { name ->
+                if (name.isBlank()) sourceError = "Inserisci un nome per questa lista o account."
+                else {
+                    pendingFileProfileName = name
+                    filePicker.launch(arrayOf("*/*"))
+                }
+            }
         )
     }
 }
 
 @Composable
-private fun AppHeader(onAdd: () -> Unit, compact: Boolean) {
+private fun AppHeader(
+    onAdd: () -> Unit,
+    compact: Boolean,
+    profiles: List<PlaylistProfile>,
+    activeProfileId: String?,
+    onSelectProfile: (PlaylistProfile) -> Unit
+) {
+    var profileMenuExpanded by remember { mutableStateOf(false) }
+    val activeProfile = profiles.firstOrNull { it.id == activeProfileId }
     Row(Modifier.fillMaxWidth().padding(horizontal = if (compact) 16.dp else 22.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text("ASLWIPTV", color = Color.White, fontWeight = FontWeight.Black, fontSize = 22.sp, letterSpacing = 1.5.sp)
             Text("STREAMING, SENZA COMPROMESSI", color = Muted, fontSize = 9.sp, letterSpacing = 1.4.sp)
+            Box {
+                TextButton(
+                    onClick = { profileMenuExpanded = true },
+                    contentPadding = PaddingValues(horizontal = 0.dp, vertical = 0.dp)
+                ) {
+                    Icon(Icons.Default.AccountCircle, contentDescription = null, modifier = Modifier.size(17.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        activeProfile?.name ?: "Seleziona lista",
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.widthIn(max = if (compact) 170.dp else 240.dp)
+                    )
+                    Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+                }
+                DropdownMenu(expanded = profileMenuExpanded, onDismissRequest = { profileMenuExpanded = false }) {
+                    if (profiles.isEmpty()) {
+                        DropdownMenuItem(text = { Text("Nessuna lista salvata") }, onClick = { profileMenuExpanded = false }, enabled = false)
+                    }
+                    profiles.forEach { profile ->
+                        DropdownMenuItem(
+                            text = { Text(profile.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            leadingIcon = { Icon(Icons.Default.PlaylistPlay, contentDescription = null) },
+                            trailingIcon = if (profile.id == activeProfileId) ({ Icon(Icons.Default.Check, contentDescription = "Attiva") }) else null,
+                            onClick = { profileMenuExpanded = false; onSelectProfile(profile) }
+                        )
+                    }
+                }
+            }
         }
         if (compact) IconButton(onClick = onAdd) { Icon(Icons.Default.Add, contentDescription = "Aggiungi sorgente", tint = Purple) }
         else TextButton(onClick = onAdd) { Icon(Icons.Default.Add, null); Spacer(Modifier.width(4.dp)); Text("Aggiungi playlist") }
@@ -431,12 +625,14 @@ private fun SettingsContent(advanced: Boolean, onAdvanced: (Boolean) -> Unit, on
             Text(proxyMessage!!, color = if (savedMessage) Purple else MaterialTheme.colorScheme.error, fontSize = 12.sp)
         }
         Button(onClick = onSetup) { Icon(Icons.Default.Add, null); Spacer(Modifier.width(6.dp)); Text("Gestisci sorgenti") }
-        Text("Versione 0.2.0 · ASLWIPTV", color = Muted, fontSize = 11.sp)
+        Text("Versione 0.3.0 · ASLWIPTV", color = Muted, fontSize = 11.sp)
     }
 }
 
 @Composable
 private fun AddSourceDialog(
+    profileName: String,
+    onProfileNameChange: (String) -> Unit,
     server: String,
     onServerChange: (String) -> Unit,
     username: String,
@@ -449,9 +645,9 @@ private fun AddSourceDialog(
     error: String?,
     onClearError: () -> Unit,
     onDismiss: () -> Unit,
-    onSaveXtream: () -> Unit,
-    onSaveM3u: () -> Unit,
-    onPickFile: () -> Unit
+    onSaveXtream: (String) -> Unit,
+    onSaveM3u: (String) -> Unit,
+    onPickFile: (String) -> Unit
 ) {
     var selected by remember { mutableIntStateOf(0) }
     val heightLimit = (LocalConfiguration.current.screenHeightDp * 0.9f).dp
@@ -466,6 +662,14 @@ private fun AddSourceDialog(
                     Text("Aggiungi sorgente", fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                     IconButton(onClick = onDismiss, enabled = !loading) { Icon(Icons.Default.Close, contentDescription = "Chiudi") }
                 }
+                OutlinedTextField(
+                    value = profileName,
+                    onValueChange = onProfileNameChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Nome account o lista") },
+                    singleLine = true,
+                    enabled = !loading
+                )
                 TabRow(selectedTabIndex = selected, containerColor = Panel) {
                     Tab(selected == 0, onClick = { selected = 0; onClearError() }, text = { Text("Xtream") })
                     Tab(selected == 1, onClick = { selected = 1; onClearError() }, text = { Text("M3U") })
@@ -508,7 +712,7 @@ private fun AddSourceDialog(
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)
                     )
-                    OutlinedButton(onClick = onPickFile, modifier = Modifier.fillMaxWidth(), enabled = !loading) {
+                    OutlinedButton(onClick = { onPickFile(profileName) }, modifier = Modifier.fillMaxWidth(), enabled = !loading) {
                         Icon(Icons.Default.FolderOpen, null)
                         Spacer(Modifier.width(8.dp))
                         Text("Scegli file M3U")
@@ -520,10 +724,71 @@ private fun AddSourceDialog(
                     TextButton(onClick = onDismiss, enabled = !loading) { Text("Annulla") }
                     Spacer(Modifier.width(8.dp))
                     Button(
-                        onClick = { if (selected == 0) onSaveXtream() else onSaveM3u() },
-                        enabled = !loading,
+                        onClick = { if (selected == 0) onSaveXtream(profileName) else onSaveM3u(profileName) },
+                        enabled = !loading && profileName.isNotBlank(),
                         colors = ButtonDefaults.buttonColors(containerColor = Purple)
                     ) { Text(if (loading) "Caricamento…" else "Salva") }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlayerPreviewPane(
+    item: MediaItem,
+    playback: PlaybackController,
+    error: String?,
+    advanced: Boolean,
+    compact: Boolean,
+    onFullscreen: () -> Unit,
+    onRetry: () -> Unit
+) {
+    var isPlaying by remember(playback.player) { mutableStateOf(playback.player.isPlaying) }
+    DisposableEffect(playback.player) {
+        val listener = object : Player.Listener {
+            override fun onIsPlayingChanged(playing: Boolean) { isPlaying = playing }
+        }
+        playback.player.addListener(listener)
+        onDispose { playback.player.removeListener(listener) }
+    }
+    Surface(
+        modifier = Modifier.fillMaxWidth().then(if (compact) Modifier.wrapContentHeight() else Modifier.fillMaxHeight()),
+        color = Panel,
+        shape = RoundedCornerShape(18.dp),
+        tonalElevation = 2.dp
+    ) {
+        Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("In riproduzione", color = Muted, fontSize = 10.sp)
+                    Text(item.title, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                IconButton(onClick = onFullscreen) {
+                    Icon(Icons.Default.Fullscreen, contentDescription = "Apri a schermo intero", tint = Purple)
+                }
+            }
+            AndroidView(
+                factory = { ctx -> PlayerView(ctx).apply { player = playback.player; useController = advanced } },
+                update = { it.useController = advanced },
+                onRelease = { it.player = null },
+                modifier = Modifier.fillMaxWidth().then(
+                    if (compact) Modifier.height(180.dp) else Modifier.aspectRatio(16f / 9f)
+                )
+            )
+            if (!advanced && error == null) {
+                TextButton(onClick = { if (isPlaying) playback.player.pause() else playback.player.play() }) {
+                    Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, contentDescription = null)
+                    Spacer(Modifier.width(4.dp))
+                    Text(if (isPlaying) "Pausa" else "Riprendi")
+                }
+            }
+            if (error != null) {
+                Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                TextButton(onClick = onRetry) {
+                    Icon(Icons.Default.Refresh, contentDescription = null)
+                    Spacer(Modifier.width(4.dp))
+                    Text("Riprova")
                 }
             }
         }
@@ -540,7 +805,6 @@ private fun PlayerDialog(
     onRetry: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    val heightLimit = (LocalConfiguration.current.screenHeightDp * 0.92f).dp
     var isPlaying by remember(playback.player) { mutableStateOf(playback.player.isPlaying) }
     DisposableEffect(playback.player) {
         val listener = object : Player.Listener {
@@ -550,43 +814,46 @@ private fun PlayerDialog(
         onDispose { playback.player.removeListener(listener) }
     }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(
-            Modifier.fillMaxWidth().widthIn(max = 960.dp).heightIn(max = heightLimit).padding(12.dp),
-            color = Panel,
-            shape = RoundedCornerShape(20.dp)
-        ) {
-            Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(item.title, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f), maxLines = 2)
-                    IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, contentDescription = "Chiudi player") }
-                }
+        Surface(Modifier.fillMaxSize(), color = Color.Black, shape = RoundedCornerShape(0.dp)) {
+            Box(Modifier.fillMaxSize()) {
                 AndroidView(
                     factory = { ctx -> PlayerView(ctx).apply { player = playback.player; useController = advanced } },
                     update = { it.useController = advanced },
-                    modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f)
+                    onRelease = { it.player = null },
+                    modifier = Modifier.fillMaxSize()
                 )
-                Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    Modifier.align(Alignment.TopCenter).fillMaxWidth().background(Color(0x99090A10)).padding(horizontal = 12.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(item.title, fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, contentDescription = "Esci da schermo intero", tint = Color.White) }
+                }
+                Row(
+                    Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(Color(0x99090A10)).padding(horizontal = 12.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Column(Modifier.weight(1f)) {
-                        Text("Controlli avanzati", fontWeight = FontWeight.SemiBold)
+                        Text("Controlli avanzati", fontWeight = FontWeight.SemiBold, color = Color.White)
                         Text("Seek, velocità e tracce se supportati dallo stream", color = Muted, fontSize = 11.sp)
                     }
                     Switch(checked = advanced, onCheckedChange = onAdvanced)
-                }
-                if (!advanced) {
-                    Button(onClick = { if (isPlaying) playback.player.pause() else playback.player.play() }) {
-                        Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, null)
-                        Spacer(Modifier.width(6.dp))
-                        Text(if (isPlaying) "Pausa" else "Riprendi")
+                    if (!advanced) {
+                        IconButton(onClick = { if (isPlaying) playback.player.pause() else playback.player.play() }) {
+                            Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, contentDescription = if (isPlaying) "Pausa" else "Riprendi", tint = Color.White)
+                        }
+                    }
+                    if (error != null) {
+                        IconButton(onClick = onRetry) { Icon(Icons.Default.Refresh, contentDescription = "Riprova", tint = Color.White) }
                     }
                 }
                 if (error != null) {
-                    Spacer(Modifier.height(10.dp))
-                    Text(error, color = MaterialTheme.colorScheme.error, fontSize = 13.sp)
-                    TextButton(onClick = onRetry) {
-                        Icon(Icons.Default.Refresh, null)
-                        Spacer(Modifier.width(4.dp))
-                        Text("Riprova")
-                    }
+                    Text(
+                        error,
+                        color = Color.White,
+                        fontSize = 13.sp,
+                        modifier = Modifier.align(Alignment.Center).padding(24.dp).background(Color(0xCC090A10), RoundedCornerShape(12.dp)).padding(16.dp)
+                    )
                 }
             }
         }

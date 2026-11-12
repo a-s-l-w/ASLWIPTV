@@ -17,7 +17,7 @@ class PlaybackController(context: Context, networkClient: OkHttpClient) {
     private val mediaSourceFactory = DefaultMediaSourceFactory(
         DefaultDataSource.Factory(
             context,
-            OkHttpDataSource.Factory(networkClient).setUserAgent("ASLWIPTV/0.2.0")
+            OkHttpDataSource.Factory(networkClient).setUserAgent("ASLWIPTV/0.3.0")
         )
     )
 

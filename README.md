@@ -2,7 +2,7 @@
 
 Progetto originale Android (Kotlin + Jetpack Compose + Media3), creato da zero. L'APK ricevuto è stato considerato solo come riferimento generale: nessun codice, asset, libreria o branding è stato estratto o riutilizzato.
 
-## Stato attuale: prototipo 0.2.0
+## Stato attuale: prototipo 0.3.0
 
 Incluso:
 - struttura Android multi-form-factor (telefono/tablet e launcher Android TV)
@@ -11,6 +11,8 @@ Incluso:
 - player Media3/ExoPlayer con supporto HLS e DASH tramite moduli dedicati
 - importazione di playlist M3U da URL o file locale
 - collegamento Xtream Codes con caricamento dei canali Live TV
+- profili multipli per account Xtream e playlist M3U, selezionabili dall’intestazione
+- salvataggio dei profili e dei canali importati, con cifratura AES-GCM tramite Android Keystore
 - supporto a sorgenti HTTP e HTTPS
 - proxy applicativo HTTP o SOCKS condiviso da importazione e player; autenticazione disponibile per proxy HTTP
 - compatibilità con la VPN gestita da Android: l’app non rileva né blocca le VPN di terze parti
@@ -19,7 +21,6 @@ Incluso:
 - configurazione Gradle e documentazione
 
 Non ancora completato:
-- salvataggio persistente di playlist e profili (la sorgente importata resta in memoria fino alla chiusura dell’app)
 - caricamento categorie VOD/serie, dettagli, stagioni ed episodi
 - EPG XMLTV, ricerca, preferiti, cronologia e sincronizzazione
 - selezione tracce/decoder e test su TV reali e dispositivi diversi
@@ -37,7 +38,7 @@ Aprire la cartella `ASLWIPTV` in Android Studio, sincronizzare Gradle e avviare 
 - Media3 1.11.1 è usato per la riproduzione. HLS e DASH sono gestiti dai moduli Media3 ufficiali.
 - I buffer iniziali nel controller sono valori di partenza, non una promessa di eliminare buffering: vanno misurati e tarati su stream e reti reali.
 - HTTP non cifra credenziali né flussi. Preferire HTTPS quando il provider lo supporta.
-- le credenziali Xtream restano in memoria e sono rimosse dalla schermata dopo l’importazione; non sono salvate come profilo.
+- credenziali, URL sorgente e URL dei canali salvati sono cifrati nello spazio privato dell’app con una chiave Android Keystore; le liste M3U da file mantengono la copia dei canali importati.
 - le impostazioni del proxy sono memorizzate nello spazio privato dell’app. L’autenticazione del proxy è supportata per HTTP; SOCKS è senza credenziali.
 - il proxy app-level non sostituisce la VPN: la rete/VPN di Android continua a instradare il traffico dell’app.
 - il client Xtream carica Live TV. VOD, serie, EPG e requisiti specifici dei singoli provider necessitano di ulteriori verifiche.
