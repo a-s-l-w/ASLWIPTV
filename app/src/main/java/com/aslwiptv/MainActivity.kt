@@ -222,7 +222,8 @@ private fun AslwApp(playback: PlaybackController, network: AppNetwork) {
                         playing = null
                         playerFullscreen = false
                         playerError = null
-                        playback.player.pause()
+                        playback.player.stop()
+                        playback.player.clearMediaItems()
                         section = Section.LIVE
                         showSetup = false
                         profileName = ""
@@ -283,7 +284,8 @@ private fun AslwApp(playback: PlaybackController, network: AppNetwork) {
             playing = null
             playerFullscreen = false
             playerError = null
-            playback.player.pause()
+            playback.player.stop()
+            playback.player.clearMediaItems()
             val saveError = runCatching {
                 PlaylistProfileStore.save(context.applicationContext, updatedProfiles, profile.id)
             }.exceptionOrNull()
@@ -321,7 +323,8 @@ private fun AslwApp(playback: PlaybackController, network: AppNetwork) {
         playing = null
         playerError = null
         seriesSelection = null
-        playback.player.pause()
+        playback.player.stop()
+        playback.player.clearMediaItems()
         section = Section.LIVE
     }
 
