@@ -1157,8 +1157,8 @@ private fun PlayerDialog(
     onDismiss: () -> Unit
 ) {
     var isPlaying by remember(playback.player) { mutableStateOf(playback.player.isPlaying) }
-    var controlsVisible by remember(item.url) { mutableStateOf(true) }
-    LaunchedEffect(item.url, controlsVisible) {
+    var controlsVisible by remember(item.streamUrl) { mutableStateOf(true) }
+    LaunchedEffect(item.streamUrl, controlsVisible) {
         if (controlsVisible) {
             delay(3_500)
             controlsVisible = false
@@ -1204,9 +1204,9 @@ private fun PlayerDialog(
                             player = playback.player
                             useController = advanced
                             controllerShowTimeoutMs = 3_500
-                            setControllerVisibilityListener { visibility ->
+                            setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { visibility: Int ->
                                 if (advanced) controlsVisible = visibility == View.VISIBLE
-                            }
+                            })
                             if (advanced) showController()
                         }
                     },
