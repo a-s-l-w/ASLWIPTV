@@ -7,7 +7,7 @@
         android:label="ASLWIPTV"
         android:theme="@style/Theme.ASLWIPTV"
         android:supportsRtl="true"
-        android:usesCleartextTraffic="false">
+        android:usesCleartextTraffic="true">
         <activity
             android:name=".MainActivity"
             android:configChanges="orientation|screenSize|keyboardHidden"
@@ -23,3 +23,4 @@
         </activity>
     </application>
 </manifest>
+
