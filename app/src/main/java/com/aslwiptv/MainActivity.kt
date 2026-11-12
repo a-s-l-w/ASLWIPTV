@@ -171,24 +171,26 @@ private fun AslwApp(playback: PlaybackController, network: AppNetwork) {
                             alwaysShowLabel = false
                         )
                     }
-                    Box {
-                        NavigationBarItem(
-                            selected = section in listOf(Section.SERIES, Section.GUIDE, Section.SETTINGS),
-                            onClick = { moreMenuExpanded = true },
-                            icon = { Icon(Icons.Default.MoreHoriz, contentDescription = "Altre sezioni") },
-                            label = { Text("Altro", fontSize = 9.sp) },
-                            alwaysShowLabel = false
-                        )
-                        DropdownMenu(expanded = moreMenuExpanded, onDismissRequest = { moreMenuExpanded = false }) {
-                            listOf(Section.SERIES, Section.GUIDE, Section.SETTINGS).forEach { item ->
-                                DropdownMenuItem(
-                                    text = { Text(item.label) },
-                                    leadingIcon = { Icon(item.icon, contentDescription = null) },
-                                    onClick = { section = item; moreMenuExpanded = false }
-                                )
+                    NavigationBarItem(
+                        selected = section in listOf(Section.SERIES, Section.GUIDE, Section.SETTINGS),
+                        onClick = { moreMenuExpanded = true },
+                        icon = {
+                            Box {
+                                Icon(Icons.Default.MoreHoriz, contentDescription = "Altre sezioni")
+                                DropdownMenu(expanded = moreMenuExpanded, onDismissRequest = { moreMenuExpanded = false }) {
+                                    listOf(Section.SERIES, Section.GUIDE, Section.SETTINGS).forEach { item ->
+                                        DropdownMenuItem(
+                                            text = { Text(item.label) },
+                                            leadingIcon = { Icon(item.icon, contentDescription = null) },
+                                            onClick = { section = item; moreMenuExpanded = false }
+                                        )
+                                    }
+                                }
                             }
-                        }
-                    }
+                        },
+                        label = { Text("Altro", fontSize = 9.sp) },
+                        alwaysShowLabel = false
+                    )
                 }
             }
         } else {
