@@ -1,0 +1,6 @@
+ASLWIPTV — Copyright (c) 2026 ASLWIPTV contributors.
+
+Il codice originale scritto per questo progetto è distribuito con licenza MIT.
+Il testo della licenza MIT è disponibile in LICENSE.
+
+Questa dichiarazione riguarda esclusivamente il codice originale del progetto. Le dipendenze di terze parti restano soggette alle rispettive licenze e ai relativi avvisi.
