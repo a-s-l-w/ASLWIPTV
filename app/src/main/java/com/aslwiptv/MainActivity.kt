@@ -3,6 +3,9 @@ package com.aslwiptv
 import android.content.Context
 import android.net.Uri
 import android.os.Bundle
+import android.view.View
+import android.view.ViewParent
+import android.view.Window
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -30,6 +33,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -39,6 +43,10 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.ui.PlayerView
@@ -815,6 +823,30 @@ private fun PlayerDialog(
         onDispose { playback.player.removeListener(listener) }
     }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        val dialogView = LocalView.current
+        val dialogWindow = remember(dialogView) {
+            var parent: ViewParent? = dialogView.parent
+            var foundWindow: Window? = null
+            while (parent != null && foundWindow == null) {
+                if (parent is DialogWindowProvider) foundWindow = parent.window
+                parent = (parent as? View)?.parent
+            }
+            foundWindow
+        }
+        val systemBars = WindowInsetsCompat.Type.systemBars()
+        val restoreSystemBars = remember(dialogWindow) {
+            dialogWindow?.decorView?.rootWindowInsets?.let { insets ->
+                WindowInsetsCompat.toWindowInsetsCompat(insets, dialogWindow.decorView).isVisible(systemBars)
+            } ?: true
+        }
+        DisposableEffect(dialogWindow) {
+            val controller = dialogWindow?.let { WindowCompat.getInsetsController(it, it.decorView) }
+            controller?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            controller?.hide(systemBars)
+            onDispose {
+                if (restoreSystemBars) controller?.show(systemBars)
+            }
+        }
         Surface(Modifier.fillMaxSize(), color = Color.Black, shape = RoundedCornerShape(0.dp)) {
             Box(Modifier.fillMaxSize()) {
                 AndroidView(
