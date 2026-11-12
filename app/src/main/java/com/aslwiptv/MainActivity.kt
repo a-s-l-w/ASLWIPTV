@@ -14,6 +14,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -30,13 +31,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -49,6 +55,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.datasource.HttpDataSource
 import androidx.media3.ui.PlayerView
 import com.aslwiptv.data.AppNetwork
 import com.aslwiptv.data.AppProxyType
@@ -67,7 +74,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
+import java.net.ConnectException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
 import java.util.UUID
+import javax.net.ssl.SSLException
 
 private val Ink = Color(0xFF090A10)
 private val Panel = Color(0xFF141622)
@@ -104,12 +115,14 @@ private fun AslwTheme(content: @Composable () -> Unit) {
         onTertiaryContainer = Color.White,
         onError = Color.White,
         onErrorContainer = Color.White
-    ), content = content)
+    )) {
+        CompositionLocalProvider(LocalContentColor provides Color.White, content = content)
+    }
 }
 
 private enum class Section(val label: String, val icon: ImageVector) {
-    HOME("Home", Icons.Default.Home), LIVE("Live TV", Icons.Default.Tv), MOVIES("Film", Icons.Default.Movie),
-    SERIES("Serie", Icons.Default.VideoLibrary), GUIDE("EPG", Icons.Default.Schedule), SETTINGS("Impostazioni", Icons.Default.Settings)
+    LIVE("Diretta TV", Icons.Default.Tv), MOVIES("Film", Icons.Default.Movie),
+    SERIES("Serie TV", Icons.Default.VideoLibrary), SETTINGS("Impostazioni", Icons.Default.Settings)
 }
 
 @Composable
@@ -118,8 +131,10 @@ private fun AslwApp(playback: PlaybackController, network: AppNetwork) {
     val scope = rememberCoroutineScope()
     val xtream = remember(network) { XtreamRepository(network.apiClient) }
     val m3u = remember(network) { M3uRepository(network.apiClient) }
-    var section by remember { mutableStateOf(Section.HOME) }
-    var moreMenuExpanded by remember { mutableStateOf(false) }
+    var section by remember { mutableStateOf(Section.LIVE) }
+    var authenticated by remember { mutableStateOf(false) }
+    var showSettingsBeforeLogin by remember { mutableStateOf(false) }
+    var lastSection by remember { mutableStateOf(Section.LIVE) }
     var playing by remember { mutableStateOf<MediaItem?>(null) }
     var advanced by remember { mutableStateOf(true) }
     var showSetup by remember { mutableStateOf(false) }
@@ -133,9 +148,14 @@ private fun AslwApp(playback: PlaybackController, network: AppNetwork) {
     var profileName by remember { mutableStateOf("") }
     var pendingFileProfileName by remember { mutableStateOf("") }
     var profiles by remember { mutableStateOf<List<PlaylistProfile>>(emptyList()) }
+    var profilesLoaded by remember { mutableStateOf(false) }
     var activeProfileId by remember { mutableStateOf<String?>(null) }
     var playlist by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
     var playerFullscreen by remember { mutableStateOf(false) }
+    var seriesSelection by remember { mutableStateOf<MediaItem?>(null) }
+    var seriesEpisodes by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
+    var seriesLoading by remember { mutableStateOf(false) }
+    var seriesError by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(context) {
         runCatching { PlaylistProfileStore.load(context.applicationContext) }
@@ -143,14 +163,18 @@ private fun AslwApp(playback: PlaybackController, network: AppNetwork) {
                 profiles = library.profiles
                 activeProfileId = library.activeProfileId
                 playlist = library.profiles.firstOrNull { it.id == library.activeProfileId }?.channels.orEmpty()
+                profilesLoaded = true
             }
-            .onFailure { error -> sourceError = error.message ?: "Impossibile leggere le liste salvate." }
+            .onFailure { error ->
+                sourceError = error.message ?: "Impossibile leggere le liste salvate."
+                profilesLoaded = true
+            }
     }
 
     DisposableEffect(playback.player) {
         val listener = object : Player.Listener {
             override fun onPlayerError(error: PlaybackException) {
-                playerError = "Riproduzione interrotta: ${error.errorCodeName.replace('_', ' ').lowercase()}. Verifica rete, proxy e accesso al canale."
+                playerError = playbackErrorMessage(error)
             }
         }
         playback.player.addListener(listener)
@@ -190,8 +214,11 @@ private fun AslwApp(playback: PlaybackController, network: AppNetwork) {
                         val updatedProfiles = profiles + profile
                         PlaylistProfileStore.save(context.applicationContext, updatedProfiles, profile.id)
                         profiles = updatedProfiles
+                        profilesLoaded = true
                         activeProfileId = profile.id
                         playlist = channels
+                        authenticated = true
+                        showSettingsBeforeLogin = false
                         playing = null
                         playerFullscreen = false
                         playerError = null
@@ -226,22 +253,77 @@ private fun AslwApp(playback: PlaybackController, network: AppNetwork) {
         showSetup = true
     }
 
-    fun selectProfile(profile: PlaylistProfile) {
-        if (activeProfileId == profile.id) return
-        activeProfileId = profile.id
-        playlist = profile.channels
-        playing = null
-        playerFullscreen = false
-        playerError = null
-        playback.player.pause()
-        section = Section.LIVE
+    fun loginWithProfile(profile: PlaylistProfile) {
+        if (loading || (authenticated && activeProfileId == profile.id)) return
         scope.launch {
-            runCatching { PlaylistProfileStore.save(context.applicationContext, profiles, profile.id) }
-                .onFailure { sourceError = it.message ?: "Impossibile salvare la lista attiva." }
+            loading = true
+            sourceError = null
+            val freshResult = when (profile.sourceType) {
+                PlaylistSourceType.XTREAM -> xtream.loadCatalog(XtreamCredentials(profile.serverUrl, profile.username, profile.password))
+                PlaylistSourceType.M3U_URL -> m3u.load(profile.playlistUrl)
+                PlaylistSourceType.M3U_FILE -> Result.success(profile.channels)
+            }
+            val freshChannels = freshResult.getOrNull()
+            val usedCache = freshChannels == null && profile.channels.isNotEmpty()
+            val channels = freshChannels ?: profile.channels
+            if (channels.isEmpty()) {
+                sourceError = freshResult.exceptionOrNull()?.message ?: "Questa lista non contiene canali."
+                loading = false
+                return@launch
+            }
+
+            val refreshedProfile = profile.copy(channels = channels)
+            val updatedProfiles = profiles.map { if (it.id == profile.id) refreshedProfile else it }
+            profiles = updatedProfiles
+            activeProfileId = profile.id
+            playlist = channels
+            authenticated = true
+            showSettingsBeforeLogin = false
+            section = Section.LIVE
+            playing = null
+            playerFullscreen = false
+            playerError = null
+            playback.player.pause()
+            val saveError = runCatching {
+                PlaylistProfileStore.save(context.applicationContext, updatedProfiles, profile.id)
+            }.exceptionOrNull()
+            sourceError = when {
+                usedCache -> "Non riesco ad aggiornare la sorgente; mostro i canali salvati. Verifica rete, proxy o VPN."
+                saveError != null -> "Canali caricati, ma non ho potuto salvare la lista aggiornata."
+                else -> null
+            }
+            loading = false
         }
     }
 
-    val activeProfile = profiles.firstOrNull { it.id == activeProfileId }
+    fun openSettings() {
+        if (authenticated) {
+            if (section != Section.SETTINGS) lastSection = section
+            section = Section.SETTINGS
+        } else {
+            showSettingsBeforeLogin = true
+        }
+    }
+
+    fun closeSettings() {
+        if (authenticated) section = lastSection else showSettingsBeforeLogin = false
+    }
+
+    fun navigateTo(target: Section) {
+        if (target != Section.SETTINGS) lastSection = target
+        section = target
+    }
+
+    fun logout() {
+        authenticated = false
+        showSettingsBeforeLogin = false
+        playerFullscreen = false
+        playing = null
+        playerError = null
+        seriesSelection = null
+        playback.player.pause()
+        section = Section.LIVE
+    }
 
     fun startPlayback(item: MediaItem) {
         if (playing?.id == item.id) {
@@ -254,94 +336,103 @@ private fun AslwApp(playback: PlaybackController, network: AppNetwork) {
         playback.play(item)
     }
 
+    fun openItem(item: MediaItem) {
+        val seriesId = item.seriesId
+        if (seriesId == null || item.streamUrl.isNotBlank()) {
+            startPlayback(item)
+            return
+        }
+        val profile = profiles.firstOrNull { it.id == activeProfileId }
+        if (profile == null || profile.sourceType != PlaylistSourceType.XTREAM) {
+            seriesError = "Gli episodi di questa serie non sono disponibili nella sorgente."
+            seriesSelection = item
+            return
+        }
+        seriesSelection = item
+        seriesEpisodes = emptyList()
+        seriesError = null
+        seriesLoading = true
+        scope.launch {
+            xtream.loadSeriesEpisodes(
+                XtreamCredentials(profile.serverUrl, profile.username, profile.password),
+                seriesId
+            ).fold(
+                onSuccess = { seriesEpisodes = it },
+                onFailure = { seriesError = it.message ?: "Impossibile caricare gli episodi." }
+            )
+            seriesLoading = false
+        }
+    }
+
     BoxWithConstraints(Modifier.fillMaxSize().background(Ink)) {
         val availableWidth = maxWidth
         val compact = availableWidth < 600.dp
-        if (compact) {
-            Column(Modifier.fillMaxSize()) {
-                AppHeader(
-                    onAdd = ::openSetup,
-                    compact = true,
+        if (!authenticated) {
+            if (showSettingsBeforeLogin) {
+                SettingsContent(advanced, { advanced = it }, ::openSetup, ::closeSettings, network)
+            } else {
+                LoginScreen(
                     profiles = profiles,
-                    activeProfileId = activeProfileId,
-                    onSelectProfile = ::selectProfile
+                    selectedProfileId = activeProfileId,
+                    profilesLoaded = profilesLoaded,
+                    loading = loading,
+                    error = sourceError,
+                    onSelectProfile = { activeProfileId = it.id },
+                    onLogin = ::loginWithProfile,
+                    onAddAccount = ::openSetup,
+                    onSettings = ::openSettings
                 )
+            }
+        } else if (compact) {
+            Column(Modifier.fillMaxSize()) {
+                AppHeader(true, profiles, activeProfileId, ::loginWithProfile, ::openSetup, ::openSettings, ::logout)
+                if (sourceError != null) StatusBanner(sourceError!!, onDismiss = { sourceError = null }, modifier = Modifier.padding(horizontal = 16.dp))
                 Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
-                    CurrentSection(section, playlist, advanced, { advanced = it }, ::openSetup, { section = it }, network, ::startPlayback)
+                    CurrentSection(section, playlist, advanced, { advanced = it }, ::openSetup, ::closeSettings, network, ::openItem)
                 }
-                if (playing != null && !playerFullscreen) PlayerPreviewPane(
+                if (playing != null && !playerFullscreen && section != Section.SETTINGS) CompactPlayerBar(
                     item = playing!!,
                     playback = playback,
                     error = playerError,
                     advanced = advanced,
-                    compact = true,
                     onFullscreen = { playerFullscreen = true },
                     onRetry = { playerError = null; playback.play(playing!!) }
                 )
                 NavigationBar(containerColor = Color(0xFF0D0F18)) {
-                    listOf(Section.HOME, Section.LIVE, Section.MOVIES).forEach { item ->
+                    listOf(Section.LIVE, Section.MOVIES, Section.SERIES).forEach { item ->
                         NavigationBarItem(
                             selected = section == item,
-                            onClick = { section = item },
+                            onClick = { navigateTo(item) },
                             icon = { Icon(item.icon, contentDescription = item.label) },
                             label = { Text(item.label, fontSize = 9.sp) },
-                            alwaysShowLabel = false
+                            alwaysShowLabel = true
                         )
                     }
-                    NavigationBarItem(
-                        selected = section in listOf(Section.SERIES, Section.GUIDE, Section.SETTINGS),
-                        onClick = { moreMenuExpanded = true },
-                        icon = {
-                            Box {
-                                Icon(Icons.Default.MoreHoriz, contentDescription = "Altre sezioni")
-                                DropdownMenu(expanded = moreMenuExpanded, onDismissRequest = { moreMenuExpanded = false }) {
-                                    listOf(Section.SERIES, Section.GUIDE, Section.SETTINGS).forEach { item ->
-                                        DropdownMenuItem(
-                                            text = { Text(item.label) },
-                                            leadingIcon = { Icon(item.icon, contentDescription = null) },
-                                            onClick = { section = item; moreMenuExpanded = false }
-                                        )
-                                    }
-                                }
-                            }
-                        },
-                        label = { Text("Altro", fontSize = 9.sp) },
-                        alwaysShowLabel = false
-                    )
                 }
             }
         } else {
             Row(Modifier.fillMaxSize()) {
-                NavigationRail(containerColor = Color(0xFF0D0F18), header = {
-                    Box(Modifier.padding(vertical = 22.dp).size(48.dp).background(Brush.linearGradient(listOf(Purple, Blue)), RoundedCornerShape(15.dp)), contentAlignment = Alignment.Center) {
-                        Text("A", fontSize = 27.sp, fontWeight = FontWeight.Black, color = Color.White)
-                    }
-                }) {
-                    Section.entries.forEach { item ->
+                NavigationRail(containerColor = Color(0xFF0D0F18), header = { BrandMark() }) {
+                    listOf(Section.LIVE, Section.MOVIES, Section.SERIES).forEach { item ->
                         NavigationRailItem(
                             selected = section == item,
-                            onClick = { section = item },
+                            onClick = { navigateTo(item) },
                             icon = { Icon(item.icon, contentDescription = item.label) },
                             label = { Text(item.label, fontSize = 10.sp) },
-                            alwaysShowLabel = false
+                            alwaysShowLabel = true
                         )
                     }
                 }
                 Column(Modifier.weight(1f).fillMaxHeight()) {
-                    AppHeader(
-                        onAdd = ::openSetup,
-                        compact = false,
-                        profiles = profiles,
-                        activeProfileId = activeProfileId,
-                        onSelectProfile = ::selectProfile
-                    )
-                    if (playing != null && !playerFullscreen && availableWidth >= 720.dp) {
+                    AppHeader(false, profiles, activeProfileId, ::loginWithProfile, ::openSetup, ::openSettings, ::logout)
+                    if (sourceError != null) StatusBanner(sourceError!!, onDismiss = { sourceError = null }, modifier = Modifier.padding(horizontal = 22.dp))
+                    if (playing != null && !playerFullscreen && section != Section.SETTINGS && availableWidth >= 720.dp) {
                         Row(
                             Modifier.weight(1f).fillMaxWidth().padding(horizontal = 22.dp, vertical = 12.dp),
                             horizontalArrangement = Arrangement.spacedBy(16.dp)
                         ) {
                             Box(Modifier.weight(0.58f).fillMaxHeight()) {
-                                CurrentSection(section, playlist, advanced, { advanced = it }, ::openSetup, { section = it }, network, ::startPlayback)
+                                CurrentSection(section, playlist, advanced, { advanced = it }, ::openSetup, ::closeSettings, network, ::openItem)
                             }
                             Box(Modifier.weight(0.42f).fillMaxHeight()) {
                                 PlayerPreviewPane(
@@ -358,14 +449,13 @@ private fun AslwApp(playback: PlaybackController, network: AppNetwork) {
                     } else {
                         Column(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 22.dp, vertical = 12.dp)) {
                             Box(Modifier.weight(1f).fillMaxWidth()) {
-                                CurrentSection(section, playlist, advanced, { advanced = it }, ::openSetup, { section = it }, network, ::startPlayback)
+                                CurrentSection(section, playlist, advanced, { advanced = it }, ::openSetup, ::closeSettings, network, ::openItem)
                             }
-                            if (playing != null && !playerFullscreen) PlayerPreviewPane(
+                            if (playing != null && !playerFullscreen && section != Section.SETTINGS) CompactPlayerBar(
                                 item = playing!!,
                                 playback = playback,
                                 error = playerError,
                                 advanced = advanced,
-                                compact = true,
                                 onFullscreen = { playerFullscreen = true },
                                 onRetry = { playerError = null; playback.play(playing!!) }
                             )
@@ -376,7 +466,7 @@ private fun AslwApp(playback: PlaybackController, network: AppNetwork) {
         }
     }
 
-    if (playing != null && playerFullscreen) PlayerDialog(
+    if (authenticated && playing != null && playerFullscreen) PlayerDialog(
         item = playing!!,
         playback = playback,
         error = playerError,
@@ -384,6 +474,15 @@ private fun AslwApp(playback: PlaybackController, network: AppNetwork) {
         onAdvanced = { advanced = it },
         onRetry = { playerError = null; playback.play(playing!!) },
         onDismiss = { playerFullscreen = false }
+    )
+
+    if (seriesSelection != null) SeriesEpisodesDialog(
+        series = seriesSelection!!,
+        episodes = seriesEpisodes,
+        loading = seriesLoading,
+        error = seriesError,
+        onPlay = { episode -> seriesSelection = null; startPlayback(episode) },
+        onDismiss = { seriesSelection = null }
     )
 
     if (showSetup) {
@@ -404,7 +503,7 @@ private fun AslwApp(playback: PlaybackController, network: AppNetwork) {
             onDismiss = { if (!loading) showSetup = false },
             onSaveXtream = { name ->
                 importPlaylist(name, PlaylistSourceType.XTREAM, server, username, password) {
-                    xtream.loadLive(XtreamCredentials(server, username, password))
+                    xtream.loadCatalog(XtreamCredentials(server, username, password))
                 }
             },
             onSaveM3u = { name ->
@@ -422,51 +521,166 @@ private fun AslwApp(playback: PlaybackController, network: AppNetwork) {
 }
 
 @Composable
+private fun LoginScreen(
+    profiles: List<PlaylistProfile>,
+    selectedProfileId: String?,
+    profilesLoaded: Boolean,
+    loading: Boolean,
+    error: String?,
+    onSelectProfile: (PlaylistProfile) -> Unit,
+    onLogin: (PlaylistProfile) -> Unit,
+    onAddAccount: () -> Unit,
+    onSettings: () -> Unit
+) {
+    val selectedProfile = profiles.firstOrNull { it.id == selectedProfileId }
+    BoxWithConstraints(Modifier.fillMaxSize().background(Brush.linearGradient(listOf(Ink, Panel, Color(0xFF241139))))) {
+        Image(
+            painter = painterResource(R.drawable.aslwiptv_logo),
+            contentDescription = null,
+            contentScale = ContentScale.Fit,
+            colorFilter = ColorFilter.tint(Color.White),
+            modifier = Modifier.align(Alignment.BottomEnd).sizeIn(maxWidth = maxWidth * 0.8f, maxHeight = maxHeight * 0.55f).alpha(0.055f)
+        )
+        Column(
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 28.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Surface(
+                Modifier.fillMaxWidth().widthIn(max = 420.dp).height(210.dp),
+                color = Color.White,
+                shape = RoundedCornerShape(24.dp),
+                tonalElevation = 4.dp
+            ) {
+                Image(
+                    painter = painterResource(R.drawable.aslwiptv_logo),
+                    contentDescription = "Logo ASLWIPTV",
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize().padding(12.dp)
+                )
+            }
+            Text("La tua TV, in un unico posto", fontSize = 24.sp, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center)
+            Text("Accedi con un account salvato o aggiungi una sorgente Xtream o M3U.", color = Muted, fontSize = 13.sp, textAlign = TextAlign.Center)
+            if (!profilesLoaded) {
+                CircularProgressIndicator(color = Purple)
+                Text("Caricamento account salvati…", color = Muted, fontSize = 12.sp)
+            } else if (profiles.isNotEmpty()) {
+                ProfilePicker(
+                    profiles = profiles,
+                    selectedProfileId = selectedProfileId,
+                    onSelect = onSelectProfile,
+                    modifier = Modifier.fillMaxWidth().widthIn(max = 420.dp),
+                    labelWhenEmpty = "Scegli un account"
+                )
+                Button(
+                    onClick = { selectedProfile?.let(onLogin) },
+                    enabled = selectedProfile != null && !loading,
+                    modifier = Modifier.fillMaxWidth().widthIn(max = 420.dp).heightIn(min = 52.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Purple)
+                ) {
+                    if (loading) CircularProgressIndicator(Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp)
+                    else Icon(Icons.Default.Login, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text(if (loading) "Accesso in corso…" else "Accedi")
+                }
+                OutlinedButton(onClick = onAddAccount, enabled = !loading, modifier = Modifier.fillMaxWidth().widthIn(max = 420.dp)) {
+                    Icon(Icons.Default.Add, contentDescription = null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("Aggiungi un altro account o lista")
+                }
+            } else {
+                Text("Non hai ancora salvato un account.", color = Muted, fontSize = 13.sp, textAlign = TextAlign.Center)
+                Button(onClick = onAddAccount, enabled = !loading, modifier = Modifier.fillMaxWidth().widthIn(max = 420.dp).heightIn(min = 52.dp)) {
+                    Icon(Icons.Default.Add, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Aggiungi account Xtream o M3U")
+                }
+            }
+            if (error != null) Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp, textAlign = TextAlign.Center, modifier = Modifier.widthIn(max = 420.dp))
+            TextButton(onClick = onSettings) {
+                Icon(Icons.Default.Settings, contentDescription = null)
+                Spacer(Modifier.width(6.dp))
+                Text("Impostazioni rete e proxy")
+            }
+            Text("Usa solo sorgenti e contenuti per cui hai l’autorizzazione.", color = Muted, fontSize = 10.sp, textAlign = TextAlign.Center)
+        }
+    }
+}
+
+@Composable
+private fun ProfilePicker(
+    profiles: List<PlaylistProfile>,
+    selectedProfileId: String?,
+    onSelect: (PlaylistProfile) -> Unit,
+    modifier: Modifier = Modifier,
+    labelWhenEmpty: String = "Nessuna lista"
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val selected = profiles.firstOrNull { it.id == selectedProfileId }
+    Box(modifier) {
+        OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth(), enabled = profiles.isNotEmpty()) {
+            Icon(Icons.Default.AccountCircle, contentDescription = null)
+            Spacer(Modifier.width(8.dp))
+            Text(selected?.name ?: labelWhenEmpty, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Icon(Icons.Default.ArrowDropDown, contentDescription = "Seleziona account")
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            profiles.forEach { profile ->
+                DropdownMenuItem(
+                    text = { Text(profile.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    leadingIcon = { Icon(Icons.Default.PlaylistPlay, contentDescription = null) },
+                    trailingIcon = if (profile.id == selectedProfileId) ({ Icon(Icons.Default.Check, contentDescription = "Selezionato") }) else null,
+                    onClick = { expanded = false; onSelect(profile) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun AppHeader(
-    onAdd: () -> Unit,
     compact: Boolean,
     profiles: List<PlaylistProfile>,
     activeProfileId: String?,
-    onSelectProfile: (PlaylistProfile) -> Unit
+    onSelectProfile: (PlaylistProfile) -> Unit,
+    onAdd: () -> Unit,
+    onSettings: () -> Unit,
+    onLogout: () -> Unit
 ) {
-    var profileMenuExpanded by remember { mutableStateOf(false) }
-    val activeProfile = profiles.firstOrNull { it.id == activeProfileId }
-    Row(Modifier.fillMaxWidth().padding(horizontal = if (compact) 16.dp else 22.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) {
-            Text("ASLWIPTV", color = Color.White, fontWeight = FontWeight.Black, fontSize = 22.sp, letterSpacing = 1.5.sp)
-            Text("STREAMING, SENZA COMPROMESSI", color = Muted, fontSize = 9.sp, letterSpacing = 1.4.sp)
-            Box {
-                TextButton(
-                    onClick = { profileMenuExpanded = true },
-                    contentPadding = PaddingValues(horizontal = 0.dp, vertical = 0.dp)
-                ) {
-                    Icon(Icons.Default.AccountCircle, contentDescription = null, modifier = Modifier.size(17.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text(
-                        activeProfile?.name ?: "Seleziona lista",
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.widthIn(max = if (compact) 170.dp else 240.dp)
-                    )
-                    Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+    val padding = if (compact) 16.dp else 22.dp
+    if (compact) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = padding, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                BrandMark()
+                Column(Modifier.weight(1f).padding(start = 8.dp)) {
+                    Text("ASLWIPTV", fontWeight = FontWeight.Black, fontSize = 18.sp, letterSpacing = 1.sp)
+                    Text("STREAMING, SENZA COMPROMESSI", color = Muted, fontSize = 8.sp, letterSpacing = 1.sp)
                 }
-                DropdownMenu(expanded = profileMenuExpanded, onDismissRequest = { profileMenuExpanded = false }) {
-                    if (profiles.isEmpty()) {
-                        DropdownMenuItem(text = { Text("Nessuna lista salvata") }, onClick = { profileMenuExpanded = false }, enabled = false)
-                    }
-                    profiles.forEach { profile ->
-                        DropdownMenuItem(
-                            text = { Text(profile.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                            leadingIcon = { Icon(Icons.Default.PlaylistPlay, contentDescription = null) },
-                            trailingIcon = if (profile.id == activeProfileId) ({ Icon(Icons.Default.Check, contentDescription = "Attiva") }) else null,
-                            onClick = { profileMenuExpanded = false; onSelectProfile(profile) }
-                        )
-                    }
-                }
+                IconButton(onClick = onAdd) { Icon(Icons.Default.Add, contentDescription = "Aggiungi account", tint = Purple) }
+                IconButton(onClick = onSettings) { Icon(Icons.Default.Settings, contentDescription = "Impostazioni") }
+                IconButton(onClick = onLogout) { Icon(Icons.Default.Logout, contentDescription = "Esci") }
             }
+            ProfilePicker(profiles, activeProfileId, onSelectProfile, Modifier.fillMaxWidth())
         }
-        if (compact) IconButton(onClick = onAdd) { Icon(Icons.Default.Add, contentDescription = "Aggiungi sorgente", tint = Purple) }
-        else TextButton(onClick = onAdd) { Icon(Icons.Default.Add, null); Spacer(Modifier.width(4.dp)); Text("Aggiungi playlist") }
+    } else {
+        Row(Modifier.fillMaxWidth().padding(horizontal = padding, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            BrandMark()
+            Column(Modifier.weight(1f).padding(start = 10.dp)) {
+                Text("ASLWIPTV", fontWeight = FontWeight.Black, fontSize = 19.sp, letterSpacing = 1.sp)
+                Text("STREAMING, SENZA COMPROMESSI", color = Muted, fontSize = 8.sp, letterSpacing = 1.2.sp)
+            }
+            ProfilePicker(profiles, activeProfileId, onSelectProfile, Modifier.widthIn(min = 150.dp, max = 220.dp))
+            IconButton(onClick = onAdd) { Icon(Icons.Default.Add, contentDescription = "Aggiungi account", tint = Purple) }
+            IconButton(onClick = onSettings) { Icon(Icons.Default.Settings, contentDescription = "Impostazioni") }
+            IconButton(onClick = onLogout) { Icon(Icons.Default.Logout, contentDescription = "Esci") }
+        }
+    }
+}
+
+@Composable
+private fun BrandMark() {
+    Box(Modifier.size(40.dp).background(Color.White, RoundedCornerShape(9.dp)).padding(3.dp)) {
+        Image(painterResource(R.drawable.aslwiptv_logo), contentDescription = "Logo ASLWIPTV", contentScale = ContentScale.Fit)
     }
 }
 
@@ -477,23 +691,15 @@ private fun CurrentSection(
     advanced: Boolean,
     onAdvanced: (Boolean) -> Unit,
     onSetup: () -> Unit,
-    onNavigate: (Section) -> Unit,
+    onSettingsBack: () -> Unit,
     network: AppNetwork,
     onPlay: (MediaItem) -> Unit
 ) {
     when (section) {
-        Section.HOME -> HomeContent(
-            onLive = { onNavigate(Section.LIVE) },
-            onMovies = { onNavigate(Section.MOVIES) },
-            onSetup = onSetup,
-            count = playlist.size,
-            onOpenLive = { playlist.firstOrNull { it.kind == MediaKind.LIVE }?.let(onPlay) }
-        )
-        Section.LIVE -> MediaLibrary("Live TV", playlist.filter { it.kind == MediaKind.LIVE }, onPlay, onSetup)
+        Section.LIVE -> MediaLibrary("Diretta TV", playlist.filter { it.kind == MediaKind.LIVE }, onPlay, onSetup)
         Section.MOVIES -> MediaLibrary("Film", playlist.filter { it.kind == MediaKind.MOVIE }, onPlay, onSetup)
-        Section.SERIES -> MediaLibrary("Serie", playlist.filter { it.kind == MediaKind.SERIES }, onPlay, onSetup)
-        Section.GUIDE -> EmptyState("Guida EPG", "La guida programmi sarà collegata alla sorgente EPG della playlist.", Icons.Default.Schedule)
-        Section.SETTINGS -> SettingsContent(advanced, onAdvanced, onSetup, network)
+        Section.SERIES -> MediaLibrary("Serie TV", playlist.filter { it.kind == MediaKind.SERIES }, onPlay, onSetup)
+        Section.SETTINGS -> SettingsContent(advanced, onAdvanced, onSetup, onSettingsBack, network)
     }
 }
 
@@ -574,7 +780,8 @@ private fun EmptyState(title: String, description: String, icon: androidx.compos
 }
 
 @Composable
-private fun SettingsContent(advanced: Boolean, onAdvanced: (Boolean) -> Unit, onSetup: () -> Unit, network: AppNetwork) {
+private fun SettingsContent(advanced: Boolean, onAdvanced: (Boolean) -> Unit, onSetup: () -> Unit, onBack: () -> Unit, network: AppNetwork) {
+    val scope = rememberCoroutineScope()
     val saved = remember(network) { network.proxySettings() }
     var proxyEnabled by remember(saved) { mutableStateOf(saved.enabled) }
     var proxyType by remember(saved) { mutableStateOf(saved.type) }
@@ -584,9 +791,13 @@ private fun SettingsContent(advanced: Boolean, onAdvanced: (Boolean) -> Unit, on
     var proxyPassword by remember(saved) { mutableStateOf(saved.password) }
     var typeMenu by remember { mutableStateOf(false) }
     var proxyMessage by remember { mutableStateOf<String?>(null) }
+    var testingConnection by remember { mutableStateOf(false) }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        Text("Impostazioni", fontSize = 24.sp, fontWeight = FontWeight.Bold)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Indietro") }
+            Text("Impostazioni", fontSize = 24.sp, fontWeight = FontWeight.Bold)
+        }
         Row(Modifier.fillMaxWidth().background(Panel, RoundedCornerShape(14.dp)).padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("Controlli avanzati", fontWeight = FontWeight.SemiBold)
@@ -629,12 +840,31 @@ private fun SettingsContent(advanced: Boolean, onAdvanced: (Boolean) -> Unit, on
                 }
             }
         }) { Text("Salva proxy") }
+        OutlinedButton(
+            onClick = {
+                if (testingConnection) return@OutlinedButton
+                scope.launch {
+                    testingConnection = true
+                    proxyMessage = null
+                    val result = network.testConnectivity()
+                    proxyMessage = result.fold({ it }, { it.message ?: "Verifica della connessione non riuscita." })
+                    testingConnection = false
+                }
+            },
+            enabled = !testingConnection
+        ) {
+            if (testingConnection) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+            else Icon(Icons.Default.NetworkCheck, contentDescription = null)
+            Spacer(Modifier.width(6.dp))
+            Text(if (testingConnection) "Verifica in corso…" else "Verifica rete e proxy")
+        }
+        Text("La verifica usa le impostazioni proxy salvate e la rete/VPN Android attiva.", color = Muted, fontSize = 11.sp)
         if (proxyMessage != null) {
-            val savedMessage = proxyMessage!!.contains("salvato", ignoreCase = true) || proxyMessage!!.contains("disattivato", ignoreCase = true)
+            val savedMessage = listOf("salvato", "disattivato", "funzionanti").any { proxyMessage!!.contains(it, ignoreCase = true) }
             Text(proxyMessage!!, color = if (savedMessage) Purple else MaterialTheme.colorScheme.error, fontSize = 12.sp)
         }
         Button(onClick = onSetup) { Icon(Icons.Default.Add, null); Spacer(Modifier.width(6.dp)); Text("Gestisci sorgenti") }
-        Text("Versione 0.3.0 · ASLWIPTV", color = Muted, fontSize = 11.sp)
+        Text("Versione 0.4.0 · ASLWIPTV", color = Muted, fontSize = 11.sp)
     }
 }
 
@@ -737,6 +967,103 @@ private fun AddSourceDialog(
                         enabled = !loading && profileName.isNotBlank(),
                         colors = ButtonDefaults.buttonColors(containerColor = Purple)
                     ) { Text(if (loading) "Caricamento…" else "Salva") }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StatusBanner(message: String, onDismiss: () -> Unit, modifier: Modifier = Modifier) {
+    Row(
+        modifier.fillMaxWidth().padding(vertical = 6.dp).background(Color(0xFF351C2A), RoundedCornerShape(12.dp)).padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(message, color = Color(0xFFFFCDD2), fontSize = 12.sp, modifier = Modifier.weight(1f))
+        IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, contentDescription = "Chiudi messaggio", tint = Color.White) }
+    }
+}
+
+@Composable
+private fun CompactPlayerBar(
+    item: MediaItem,
+    playback: PlaybackController,
+    error: String?,
+    advanced: Boolean,
+    onFullscreen: () -> Unit,
+    onRetry: () -> Unit
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+        color = Panel,
+        shape = RoundedCornerShape(16.dp)
+    ) {
+        Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            AndroidView(
+                factory = { ctx -> PlayerView(ctx).apply { player = playback.player; useController = advanced } },
+                update = { it.useController = advanced },
+                onRelease = { it.player = null },
+                modifier = Modifier.width(110.dp).height(64.dp)
+            )
+            Column(Modifier.weight(1f)) {
+                Text("IN RIPRODUZIONE", color = Muted, fontSize = 8.sp, letterSpacing = 1.sp)
+                Text(item.title, fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (error != null) Text(error, color = MaterialTheme.colorScheme.error, fontSize = 9.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+            if (error != null) IconButton(onClick = onRetry) { Icon(Icons.Default.Refresh, contentDescription = "Riprova", tint = Purple) }
+            IconButton(onClick = onFullscreen) { Icon(Icons.Default.Fullscreen, contentDescription = "Apri a schermo intero", tint = Purple) }
+        }
+    }
+}
+
+@Composable
+private fun SeriesEpisodesDialog(
+    series: MediaItem,
+    episodes: List<MediaItem>,
+    loading: Boolean,
+    error: String?,
+    onPlay: (MediaItem) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val heightLimit = (LocalConfiguration.current.screenHeightDp * 0.88f).dp
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(
+            Modifier.fillMaxWidth().widthIn(max = 620.dp).heightIn(max = heightLimit).padding(16.dp),
+            color = Panel,
+            shape = RoundedCornerShape(22.dp)
+        ) {
+            Column(Modifier.fillMaxWidth().padding(18.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Serie TV", color = Muted, fontSize = 10.sp)
+                        Text(series.title, fontSize = 20.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    }
+                    IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, contentDescription = "Chiudi episodi") }
+                }
+                Spacer(Modifier.height(10.dp))
+                when {
+                    loading -> {
+                        LinearProgressIndicator(Modifier.fillMaxWidth())
+                        Spacer(Modifier.height(10.dp))
+                        Text("Caricamento episodi…", color = Muted, fontSize = 12.sp)
+                    }
+                    error != null -> Text(error, color = MaterialTheme.colorScheme.error, fontSize = 13.sp)
+                    episodes.isEmpty() -> Text("Nessun episodio disponibile.", color = Muted, fontSize = 13.sp)
+                    else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(episodes, key = { it.id }) { episode ->
+                            Row(
+                                Modifier.fillMaxWidth().background(Panel2, RoundedCornerShape(12.dp)).clickable { onPlay(episode) }.focusable().padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Purple)
+                                Spacer(Modifier.width(10.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(episode.title, fontWeight = FontWeight.SemiBold)
+                                    Text(episode.category, color = Muted, fontSize = 11.sp)
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -893,6 +1220,25 @@ private fun PlayerDialog(
     }
 }
 
+private fun playbackErrorMessage(error: PlaybackException): String {
+    val causes = generateSequence(error.cause) { it.cause }.take(12).toList()
+    val httpError = causes.filterIsInstance<HttpDataSource.InvalidResponseCodeException>().firstOrNull()
+    val message = when {
+        httpError?.responseCode == 401 || httpError?.responseCode == 403 ->
+            "Il provider ha negato l’accesso al flusso (HTTP ${httpError.responseCode}). Verifica account, indirizzo e limiti del provider."
+        httpError?.responseCode == 404 -> "Il flusso non esiste più sul server (HTTP 404). Aggiorna la playlist."
+        httpError != null -> "Il server ha risposto con HTTP ${httpError.responseCode}."
+        causes.any { it is UnknownHostException } -> "Non riesco a trovare il server del canale. Controlla l’indirizzo e la connessione DNS."
+        causes.any { it is ConnectException } -> "Il server del canale rifiuta la connessione. Controlla rete, proxy e porta del provider."
+        causes.any { it is SocketTimeoutException } -> "Il server non ha risposto in tempo. Riprova o verifica la rete e il proxy."
+        causes.any { it is SSLException } -> "La connessione HTTPS non è riuscita. Verifica il certificato o usa l’indirizzo HTTPS fornito dal provider."
+        else -> "Connessione al flusso non riuscita (${error.errorCodeName.replace('_', ' ').lowercase()})."
+    }
+    val causeType = causes.firstOrNull()?.javaClass?.simpleName?.takeIf { it.isNotBlank() }
+    val diagnostic = causeType?.let { " Dettaglio: $it." }.orEmpty()
+    return "$message$diagnostic Controlla URL, proxy e VPN; alcune playlist richiedono header Referer o User-Agent."
+}
+
 private suspend fun readLocalM3u(context: Context, uri: Uri): List<MediaItem> = withContext(Dispatchers.IO) {
     val input = context.contentResolver.openInputStream(uri) ?: error("Impossibile aprire il file selezionato.")
     val maximumBytes = 32 * 1024 * 1024
@@ -910,4 +1256,5 @@ private suspend fun readLocalM3u(context: Context, uri: Uri): List<MediaItem> = 
     check(channels.isNotEmpty()) { "Il file non contiene canali M3U validi." }
     channels
 }
+
 

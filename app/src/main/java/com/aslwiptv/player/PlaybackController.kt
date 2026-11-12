@@ -14,10 +14,11 @@ import okhttp3.OkHttpClient
 
 /** Single playback engine shared by compact and advanced control surfaces. */
 class PlaybackController(context: Context, networkClient: OkHttpClient) {
+    private val httpDataSourceFactory = OkHttpDataSource.Factory(networkClient).setUserAgent("ASLWIPTV/0.4.0")
     private val mediaSourceFactory = DefaultMediaSourceFactory(
         DefaultDataSource.Factory(
             context,
-            OkHttpDataSource.Factory(networkClient).setUserAgent("ASLWIPTV/0.3.0")
+            httpDataSourceFactory
         )
     )
 
@@ -34,6 +35,7 @@ class PlaybackController(context: Context, networkClient: OkHttpClient) {
         }
 
     fun play(item: MediaItem) {
+        httpDataSourceFactory.setDefaultRequestProperties(item.requestHeaders)
         val mime = when {
             item.streamUrl.contains(".m3u8", true) -> MimeTypes.APPLICATION_M3U8
             item.streamUrl.contains(".mpd", true) -> MimeTypes.APPLICATION_MPD
@@ -49,4 +51,5 @@ class PlaybackController(context: Context, networkClient: OkHttpClient) {
 
     fun release() = player.release()
 }
+
 

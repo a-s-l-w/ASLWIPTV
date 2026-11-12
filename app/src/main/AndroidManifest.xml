@@ -4,7 +4,9 @@
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
     <application
         android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
         android:label="ASLWIPTV"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:theme="@style/Theme.ASLWIPTV"
         android:supportsRtl="true"
         android:usesCleartextTraffic="true">
@@ -23,4 +25,5 @@
         </activity>
     </application>
 </manifest>
+
 

@@ -4,6 +4,7 @@ import android.content.Context
 import okhttp3.Authenticator
 import okhttp3.Credentials
 import okhttp3.OkHttpClient
+import okhttp3.Request
 import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.Proxy
@@ -99,5 +100,19 @@ class AppNetwork(context: Context) {
             .putString("proxy_password", settings.password)
             .apply()
     }
+
+    suspend fun testConnectivity(): Result<String> = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        runCatching {
+            val request = Request.Builder()
+                .url("https://connectivitycheck.gstatic.com/generate_204")
+                .header("Cache-Control", "no-cache")
+                .build()
+            client.newBuilder().callTimeout(20, TimeUnit.SECONDS).build().newCall(request).execute().use { response ->
+                check(response.code == 204) { "La verifica rete ha restituito HTTP ${response.code}." }
+            }
+            "Connessione Internet e instradamento proxy/VPN funzionanti."
+        }
+    }
 }
+
 

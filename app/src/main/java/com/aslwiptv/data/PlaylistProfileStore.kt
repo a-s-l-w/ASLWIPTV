@@ -127,6 +127,8 @@ object PlaylistProfileStore {
                         .put("logoUrl", item.logoUrl ?: JSONObject.NULL)
                         .put("kind", item.kind.name)
                         .put("epgId", item.epgId ?: JSONObject.NULL)
+                        .put("seriesId", item.seriesId ?: JSONObject.NULL)
+                        .put("requestHeaders", JSONObject(item.requestHeaders))
                 )
             }
             profileArray.put(
@@ -162,7 +164,18 @@ object PlaylistProfileStore {
                         val id = channel.optString("id")
                         val title = channel.optString("title")
                         val streamUrl = channel.optString("streamUrl")
-                        if (id.isBlank() || title.isBlank() || streamUrl.isBlank()) continue
+                        val seriesId = channel.optNullableString("seriesId")
+                        val headers = channel.optJSONObject("requestHeaders")?.let { headerObject ->
+                            buildMap {
+                                val keys = headerObject.keys()
+                                while (keys.hasNext()) {
+                                    val key = keys.next()
+                                    val value = headerObject.optNullableString(key) ?: continue
+                                    if (key in setOf("User-Agent", "Referer", "Origin", "Cookie")) put(key, value)
+                                }
+                            }
+                        }.orEmpty()
+                        if (id.isBlank() || title.isBlank() || (streamUrl.isBlank() && seriesId == null)) continue
                         add(
                             MediaItem(
                                 id = id,
@@ -171,7 +184,9 @@ object PlaylistProfileStore {
                                 category = channel.optString("category", "Senza categoria"),
                                 logoUrl = channel.optNullableString("logoUrl"),
                                 kind = kind,
-                                epgId = channel.optNullableString("epgId")
+                                epgId = channel.optNullableString("epgId"),
+                                seriesId = seriesId,
+                                requestHeaders = headers
                             )
                         )
                     }
@@ -201,3 +216,4 @@ object PlaylistProfileStore {
     private fun JSONObject.optNullableString(key: String): String? =
         if (!has(key) || isNull(key)) null else optString(key).takeIf(String::isNotBlank)
 }
+
