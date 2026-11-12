@@ -2,7 +2,7 @@
 
 Progetto originale Android (Kotlin + Jetpack Compose + Media3), creato da zero. L'APK ricevuto è stato considerato solo come riferimento generale: nessun codice, asset, libreria o branding è stato estratto o riutilizzato.
 
-## Stato attuale: prototipo 0.4.1
+## Stato attuale: prototipo 0.4.2
 
 Incluso:
 - struttura Android multi-form-factor (telefono/tablet e launcher Android TV)

@@ -22,6 +22,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.input.TextFieldLineLimits
+import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -41,7 +43,6 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -824,10 +825,10 @@ private fun SettingsContent(advanced: Boolean, onAdvanced: (Boolean) -> Unit, on
                 }
             }
         }
-        OutlinedTextField(proxyHost, { proxyHost = it; proxyMessage = null }, modifier = Modifier.fillMaxWidth(), label = { Text("Indirizzo proxy") }, singleLine = true)
-        OutlinedTextField(proxyPort, { proxyPort = it.filter(Char::isDigit).take(5); proxyMessage = null }, modifier = Modifier.fillMaxWidth(), label = { Text("Porta") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
-        OutlinedTextField(proxyUsername, { proxyUsername = it; proxyMessage = null }, modifier = Modifier.fillMaxWidth(), label = { Text("Username proxy (opzionale)") }, singleLine = true)
-        OutlinedTextField(proxyPassword, { proxyPassword = it; proxyMessage = null }, modifier = Modifier.fillMaxWidth(), label = { Text("Password proxy (opzionale)") }, singleLine = true, visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password))
+        DpadTextField(proxyHost, { proxyHost = it; proxyMessage = null }, "Indirizzo proxy")
+        DpadTextField(proxyPort, { proxyPort = it.filter(Char::isDigit).take(5); proxyMessage = null }, "Porta", keyboardType = KeyboardType.Number)
+        DpadTextField(proxyUsername, { proxyUsername = it; proxyMessage = null }, "Username proxy (opzionale)")
+        DpadTextField(proxyPassword, { proxyPassword = it; proxyMessage = null }, "Password proxy (opzionale)", keyboardType = KeyboardType.Password, secure = true)
         Text("HTTP supporta l’autenticazione. SOCKS è disponibile senza credenziali.", color = Muted, fontSize = 12.sp)
         Text("La VPN di Android resta attiva: il traffico dell’app segue la rete di sistema.", color = Muted, fontSize = 12.sp)
         Button(onClick = {
@@ -867,7 +868,51 @@ private fun SettingsContent(advanced: Boolean, onAdvanced: (Boolean) -> Unit, on
             Text(proxyMessage!!, color = if (savedMessage) Purple else MaterialTheme.colorScheme.error, fontSize = 12.sp)
         }
         Button(onClick = onSetup) { Icon(Icons.Default.Add, null); Spacer(Modifier.width(6.dp)); Text("Gestisci sorgenti") }
-        Text("Versione 0.4.1 · ASLW IPTV", color = Muted, fontSize = 11.sp)
+        Text("Versione 0.4.2 · ASLW IPTV", color = Muted, fontSize = 11.sp)
+    }
+}
+
+@Composable
+private fun DpadTextField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    modifier: Modifier = Modifier.fillMaxWidth(),
+    keyboardType: KeyboardType = KeyboardType.Text,
+    enabled: Boolean = true,
+    secure: Boolean = false
+) {
+    val state = rememberTextFieldState(value)
+    val latestValue by rememberUpdatedState(value)
+    val latestOnValueChange by rememberUpdatedState(onValueChange)
+
+    LaunchedEffect(state, value) {
+        if (state.text.toString() != value) state.setTextAndPlaceCursorAtEnd(value)
+    }
+    LaunchedEffect(state) {
+        snapshotFlow { state.text.toString() }.collect { editedValue ->
+            if (editedValue != latestValue) latestOnValueChange(editedValue)
+        }
+    }
+
+    val keyboardOptions = KeyboardOptions(keyboardType = keyboardType, showKeyboardOnFocus = false)
+    if (secure) {
+        OutlinedSecureTextField(
+            state = state,
+            modifier = modifier,
+            enabled = enabled,
+            label = { Text(label) },
+            keyboardOptions = keyboardOptions
+        )
+    } else {
+        OutlinedTextField(
+            state = state,
+            modifier = modifier,
+            enabled = enabled,
+            label = { Text(label) },
+            keyboardOptions = keyboardOptions,
+            lineLimits = TextFieldLineLimits.SingleLine
+        )
     }
 }
 
@@ -904,14 +949,7 @@ private fun AddSourceDialog(
                     Text("Aggiungi sorgente", fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                     IconButton(onClick = onDismiss, enabled = !loading) { Icon(Icons.Default.Close, contentDescription = "Chiudi") }
                 }
-                OutlinedTextField(
-                    value = profileName,
-                    onValueChange = onProfileNameChange,
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Nome account o lista") },
-                    singleLine = true,
-                    enabled = !loading
-                )
+                DpadTextField(profileName, onProfileNameChange, "Nome account o lista", enabled = !loading)
                 TabRow(selectedTabIndex = selected, containerColor = Panel) {
                     Tab(selected == 0, onClick = { selected = 0; onClearError() }, text = { Text("Xtream") })
                     Tab(selected == 1, onClick = { selected = 1; onClearError() }, text = { Text("M3U") })
@@ -919,41 +957,13 @@ private fun AddSourceDialog(
                 if (selected == 0) {
                     Text("Accedi con i dati del tuo provider.", color = Muted, fontSize = 12.sp)
                     Text("HTTP non cifra credenziali o flussi. Preferisci HTTPS quando disponibile.", color = Muted, fontSize = 12.sp)
-                    OutlinedTextField(
-                        value = server,
-                        onValueChange = { onServerChange(it); onClearError() },
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text("URL server (http:// o https://)") },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)
-                    )
-                    OutlinedTextField(
-                        value = username,
-                        onValueChange = { onUsernameChange(it); onClearError() },
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text("Username") },
-                        singleLine = true
-                    )
-                    OutlinedTextField(
-                        value = password,
-                        onValueChange = { onPasswordChange(it); onClearError() },
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text("Password") },
-                        singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password)
-                    )
+                    DpadTextField(server, { onServerChange(it); onClearError() }, "URL server (http:// o https://)", keyboardType = KeyboardType.Uri)
+                    DpadTextField(username, { onUsernameChange(it); onClearError() }, "Username")
+                    DpadTextField(password, { onPasswordChange(it); onClearError() }, "Password", keyboardType = KeyboardType.Password, secure = true)
                 } else {
                     Text("Importa una playlist da URL o da un file sul dispositivo.", color = Muted, fontSize = 12.sp)
                     Text("I flussi HTTP sono consentiti; il loro traffico non è cifrato.", color = Muted, fontSize = 12.sp)
-                    OutlinedTextField(
-                        value = playlistUrl,
-                        onValueChange = { onPlaylistUrlChange(it); onClearError() },
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text("URL M3U (http:// o https://)") },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)
-                    )
+                    DpadTextField(playlistUrl, { onPlaylistUrlChange(it); onClearError() }, "URL M3U (http:// o https://)", keyboardType = KeyboardType.Uri)
                     OutlinedButton(onClick = { onPickFile(profileName) }, modifier = Modifier.fillMaxWidth(), enabled = !loading) {
                         Icon(Icons.Default.FolderOpen, null)
                         Spacer(Modifier.width(8.dp))
