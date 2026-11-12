@@ -14,8 +14,8 @@ android {
         applicationId = "com.aslwiptv"
         minSdk = 23
         targetSdk = 36
-        versionCode = 6
-        versionName = "0.4.2"
+        versionCode = 7
+        versionName = "0.4.3"
         vectorDrawables { useSupportLibrary = true }
     }
 
@@ -67,5 +67,4 @@ dependencies {
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
 }
-
 

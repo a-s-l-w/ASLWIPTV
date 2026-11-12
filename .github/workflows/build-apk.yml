@@ -10,6 +10,9 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -30,13 +33,35 @@ jobs:
         run: gradle assembleDebug --no-daemon --stacktrace
 
       - name: Give the APK its product name
-        run: cp app/build/outputs/apk/debug/app-debug.apk "app/build/outputs/apk/debug/ASLW IPTV-0.4.2-debug.apk"
+        run: cp app/build/outputs/apk/debug/app-debug.apk "app/build/outputs/apk/debug/ASLW IPTV-0.4.3-debug.apk"
+
+      - name: Remove previous APK downloads
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          artifact_ids=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" --jq '.artifacts[] | select((.name | ascii_downcase | contains("aslw")) and (.name | ascii_downcase | contains("apk"))) | .id')
+          for artifact_id in $artifact_ids; do
+            gh api --method DELETE "repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}"
+          done
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: ASLW-IPTV-0.4.2-debug-apk
-          path: app/build/outputs/apk/debug/ASLW IPTV-0.4.2-debug.apk
+          name: ASLW-IPTV-0.4.3-debug-apk
+          path: app/build/outputs/apk/debug/ASLW IPTV-0.4.3-debug.apk
           if-no-files-found: error
 
+      - name: Publish downloadable GitHub release
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view v0.4.3 >/dev/null 2>&1; then
+            gh release delete v0.4.3 --yes --cleanup-tag
+          fi
+          gh release create v0.4.3 "app/build/outputs/apk/debug/ASLW IPTV-0.4.3-debug.apk" \
+            --target "$GITHUB_SHA" \
+            --title "ASLW IPTV 0.4.3" \
+            --notes "Build Android aggiornata. Per l'installazione potrebbe essere necessario disinstallare la precedente versione debug."
 

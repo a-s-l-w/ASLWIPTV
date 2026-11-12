@@ -15,6 +15,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -32,6 +33,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
@@ -73,6 +75,7 @@ import com.aslwiptv.data.XtreamCredentials
 import com.aslwiptv.data.XtreamRepository
 import com.aslwiptv.player.PlaybackController
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
@@ -476,7 +479,6 @@ private fun AslwApp(playback: PlaybackController, network: AppNetwork) {
         playback = playback,
         error = playerError,
         advanced = advanced,
-        onAdvanced = { advanced = it },
         onRetry = { playerError = null; playback.play(playing!!) },
         onDismiss = { playerFullscreen = false }
     )
@@ -1151,11 +1153,17 @@ private fun PlayerDialog(
     playback: PlaybackController,
     error: String?,
     advanced: Boolean,
-    onAdvanced: (Boolean) -> Unit,
     onRetry: () -> Unit,
     onDismiss: () -> Unit
 ) {
     var isPlaying by remember(playback.player) { mutableStateOf(playback.player.isPlaying) }
+    var controlsVisible by remember(item.url) { mutableStateOf(true) }
+    LaunchedEffect(item.url, controlsVisible) {
+        if (controlsVisible) {
+            delay(3_500)
+            controlsVisible = false
+        }
+    }
     DisposableEffect(playback.player) {
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(playing: Boolean) { isPlaying = playing }
@@ -1191,34 +1199,51 @@ private fun PlayerDialog(
         Surface(Modifier.fillMaxSize(), color = Color.Black, shape = RoundedCornerShape(0.dp)) {
             Box(Modifier.fillMaxSize()) {
                 AndroidView(
-                    factory = { ctx -> PlayerView(ctx).apply { player = playback.player; useController = advanced } },
-                    update = { it.useController = advanced },
-                    onRelease = { it.player = null },
-                    modifier = Modifier.fillMaxSize()
-                )
-                Row(
-                    Modifier.align(Alignment.TopCenter).fillMaxWidth().background(Color(0x99090A10)).padding(horizontal = 12.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(item.title, fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, contentDescription = "Esci da schermo intero", tint = Color.White) }
-                }
-                Row(
-                    Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(Color(0x99090A10)).padding(horizontal = 12.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Controlli avanzati", fontWeight = FontWeight.SemiBold, color = Color.White)
-                        Text("Seek, velocità e tracce se supportati dallo stream", color = Muted, fontSize = 11.sp)
-                    }
-                    Switch(checked = advanced, onCheckedChange = onAdvanced)
-                    if (!advanced) {
-                        IconButton(onClick = { if (isPlaying) playback.player.pause() else playback.player.play() }) {
-                            Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, contentDescription = if (isPlaying) "Pausa" else "Riprendi", tint = Color.White)
+                    factory = { ctx ->
+                        PlayerView(ctx).apply {
+                            player = playback.player
+                            useController = advanced
+                            controllerShowTimeoutMs = 3_500
+                            setControllerVisibilityListener { visibility ->
+                                if (advanced) controlsVisible = visibility == View.VISIBLE
+                            }
+                            if (advanced) showController()
                         }
+                    },
+                    update = {
+                        it.useController = advanced
+                        it.controllerShowTimeoutMs = 3_500
+                        if (advanced && controlsVisible) it.showController()
+                        if (!advanced) it.hideController()
+                    },
+                    onRelease = { it.player = null },
+                    modifier = Modifier.fillMaxSize().then(
+                        if (advanced) Modifier else Modifier.pointerInput(controlsVisible) {
+                            detectTapGestures { controlsVisible = !controlsVisible }
+                        }
+                    )
+                )
+                if (controlsVisible) {
+                    Row(
+                        Modifier.align(Alignment.TopCenter).fillMaxWidth().background(Color(0x99090A10)).padding(horizontal = 12.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(item.title, fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, contentDescription = "Esci da schermo intero", tint = Color.White) }
                     }
-                    if (error != null) {
-                        IconButton(onClick = onRetry) { Icon(Icons.Default.Refresh, contentDescription = "Riprova", tint = Color.White) }
+                    Row(
+                        Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(Color(0x99090A10)).padding(horizontal = 12.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (!advanced) {
+                            IconButton(onClick = { if (isPlaying) playback.player.pause() else playback.player.play() }) {
+                                Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, contentDescription = if (isPlaying) "Pausa" else "Riprendi", tint = Color.White)
+                            }
+                        }
+                        Spacer(Modifier.weight(1f))
+                        if (error != null) {
+                            IconButton(onClick = onRetry) { Icon(Icons.Default.Refresh, contentDescription = "Riprova", tint = Color.White) }
+                        }
                     }
                 }
                 if (error != null) {
@@ -1270,5 +1295,4 @@ private suspend fun readLocalM3u(context: Context, uri: Uri): List<MediaItem> = 
     check(channels.isNotEmpty()) { "Il file non contiene canali M3U validi." }
     channels
 }
-
 

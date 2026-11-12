@@ -2,7 +2,7 @@
 
 Progetto originale Android (Kotlin + Jetpack Compose + Media3), creato da zero. L'APK ricevuto è stato considerato solo come riferimento generale: nessun codice, asset, libreria o branding è stato estratto o riutilizzato.
 
-## Stato attuale: prototipo 0.4.2
+## Stato attuale: prototipo 0.4.3
 
 Incluso:
 - struttura Android multi-form-factor (telefono/tablet e launcher Android TV)
@@ -55,5 +55,4 @@ Aprire la cartella `ASLWIPTV` in Android Studio, sincronizzare Gradle e avviare 
 
 ## Dipendenze principali
 AndroidX / Jetpack Compose, AndroidX Media3, OkHttp, Kotlin Coroutines. Consultare le rispettive licenze e includere i notice richiesti nella distribuzione.
-
 
